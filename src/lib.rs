@@ -2,4 +2,5 @@
 pub mod config;
 pub mod convert;
 pub mod types;
+pub mod auth;
 
