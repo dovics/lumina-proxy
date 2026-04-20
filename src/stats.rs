@@ -110,13 +110,13 @@ impl StatsWriter {
         // Check if we need to flush
         let mut last_flush_guard = self.last_flush.lock().await;
         let now = Instant::now();
-        if now.duration_since(*last_flush_guard) >= self.flush_interval {
-            if let Some(writer) = writer_guard.as_mut() {
-                writer.flush()
-                    .await
-                    .map_err(|e| ProxyError::BackendRequestError(format!("Failed to flush stats: {}", e)))?;
-                *last_flush_guard = now;
-            }
+        if now.duration_since(*last_flush_guard) >= self.flush_interval
+            && let Some(writer) = writer_guard.as_mut()
+        {
+            writer.flush()
+                .await
+                .map_err(|e| ProxyError::BackendRequestError(format!("Failed to flush stats: {}", e)))?;
+            *last_flush_guard = now;
         }
 
         Ok(())
