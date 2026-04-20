@@ -69,7 +69,7 @@ pub fn build_backend_url(route: &RouteConfig, model: &str) -> Result<String, Pro
             Ok(format!(
                 "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
                 base_url.trim_end_matches('/'),
-                model
+                route.upstream_model()
             ))
         }
 
