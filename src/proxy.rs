@@ -109,8 +109,13 @@ async fn handle_non_streaming(
     let model = req.model.clone();
     let start_time = std::time::Instant::now();
 
+    // Use upstream_model if configured for outgoing request
+    let mut outgoing_req = req;
+    let upstream_model = route.upstream_model().to_string();
+    outgoing_req.model = upstream_model;
+
     // Spawn token counting in a separate task
-    let prompt_tokens = count_prompt_tokens(&req);
+    let prompt_tokens = count_prompt_tokens(&outgoing_req);
 
     // Build the request based on provider type
     let mut request_builder = state.client.post(backend_url);
@@ -120,25 +125,25 @@ async fn handle_non_streaming(
 
     // Convert request body based on provider
     let body = match route.provider_type {
-        ProviderType::Ollama => serde_json::to_vec(&convert_openai_to_ollama(&req))
+        ProviderType::Ollama => serde_json::to_vec(&convert_openai_to_ollama(&outgoing_req))
             .map_err(|e| (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("Failed to serialize Ollama request: {}", e) }))
             )),
 
-        ProviderType::Anthropic => serde_json::to_vec(&convert_openai_to_anthropic(&req))
+        ProviderType::Anthropic => serde_json::to_vec(&convert_openai_to_anthropic(&outgoing_req))
             .map_err(|e| (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("Failed to serialize Anthropic request: {}", e) }))
             )),
 
-        ProviderType::Gemini => serde_json::to_vec(&convert_openai_to_gemini(&req))
+        ProviderType::Gemini => serde_json::to_vec(&convert_openai_to_gemini(&outgoing_req))
             .map_err(|e| (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("Failed to serialize Gemini request: {}", e) }))
             )),
 
-        ProviderType::OpenAi | ProviderType::OpenAiCompatible => serde_json::to_vec(&req)
+        ProviderType::OpenAi | ProviderType::OpenAiCompatible => serde_json::to_vec(&outgoing_req)
             .map_err(|e| (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) }))
@@ -271,12 +276,13 @@ async fn handle_streaming(
     let model = req.model.clone();
     let start_time = std::time::Instant::now();
 
-    // Count prompt tokens synchronously (fast enough)
-    let prompt_tokens = count_prompt_tokens(&req);
-
-    // Convert request body based on provider
+    // Convert request body based on provider - use upstream_model for outgoing request
     let mut streaming_req = req.clone();
     streaming_req.stream = Some(true);
+    streaming_req.model = route.upstream_model().to_string();
+
+    // Count prompt tokens synchronously (fast enough) - use upstream model for correct tokenizer selection
+    let prompt_tokens = count_prompt_tokens(&streaming_req);
 
     let body = match route.provider_type {
         ProviderType::Ollama => serde_json::to_vec(&convert_openai_to_ollama(&streaming_req))
