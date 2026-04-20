@@ -1,5 +1,6 @@
 use axum::{
     body::Body,
+    extract::State,
     http::{Request, StatusCode},
     middleware::Next,
     response::Response,
@@ -9,7 +10,7 @@ use crate::config::Config;
 /// Authentication middleware that validates Bearer tokens
 /// If no auth token is configured in the config, all requests are allowed
 pub async fn auth_middleware(
-    config: &Config,
+    State(config): State<Config>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
