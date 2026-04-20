@@ -8,7 +8,7 @@ use thiserror::Error;
 // =============================================================================
 
 /// OpenAI chat completion request (standard format for all incoming requests)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIChatRequest {
     pub model: String,
     pub messages: Vec<OpenAIMessage>,
@@ -29,7 +29,7 @@ pub struct OpenAIChatRequest {
 }
 
 /// A single message in an OpenAI chat conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIMessage {
     pub role: String,
     pub content: String,
