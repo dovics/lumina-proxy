@@ -454,10 +454,8 @@ async fn handle_streaming(
                     ProviderType::Anthropic => {
                         match serde_json::from_str::<AnthropicStreamChunk>(data) {
                             Ok(anthropic_chunk) => {
-                                if let Some(delta) = &anthropic_chunk.delta {
-                                    if let Some(text) = &delta.text {
-                                        counter.add_delta(text);
-                                    }
+                                if let Some(delta) = &anthropic_chunk.delta && let Some(text) = &delta.text {
+                                    counter.add_delta(text);
                                 }
                                 Ok(convert_anthropic_stream_chunk_to_openai(
                                     &anthropic_chunk,
@@ -533,13 +531,11 @@ async fn handle_streaming(
                 let next_chunk = yielded_chunks.remove(0);
                 // Any extra chunks get added back to the buffer by converting them
                 // This is a bit of a hack but it works
-                for chunk in yielded_chunks {
-                    if let Ok(bytes) = chunk {
-                        // Convert SSE format back to data line for reprocessing
-                        let s = String::from_utf8_lossy(bytes.as_ref());
-                        // The SSE is already "data: ...\n\n" so just add it to buffer
-                        buffer = s.to_string() + &buffer;
-                    }
+                for bytes in yielded_chunks.into_iter().flatten() {
+                    // Convert SSE format back to data line for reprocessing
+                    let s = String::from_utf8_lossy(bytes.as_ref());
+                    // The SSE is already "data: ...\n\n" so just add it to buffer
+                    buffer = s.to_string() + &buffer;
                 }
                 Some((next_chunk, (bytes_stream, counter, id, created, model, buffer)))
             } else if buffer.is_empty() {
