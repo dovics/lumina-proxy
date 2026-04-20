@@ -5,4 +5,5 @@ pub mod types;
 pub mod auth;
 pub mod token_counter;
 pub mod stats;
+pub mod logging;
 
