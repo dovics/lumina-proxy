@@ -53,55 +53,53 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), ProxyError> {
     }
 
     // Add file layer if enabled
-    if let Some(file_config) = &config.file {
-        if file_config.enabled {
-            // Get the log file path
-            let path = file_config
-                .path
-                .as_deref()
-                .ok_or_else(|| ProxyError::ConfigError("File logging enabled but no path provided".into()))?;
+    if let Some(file_config) = &config.file && file_config.enabled {
+        // Get the log file path
+        let path = file_config
+            .path
+            .as_deref()
+            .ok_or_else(|| ProxyError::ConfigError("File logging enabled but no path provided".into()))?;
 
-            // Get directory and filename prefix from path
-            let (directory, filename_prefix) = split_path(path);
+        // Get directory and filename prefix from path
+        let (directory, filename_prefix) = split_path(path);
 
-            // Create appender based on rotation strategy
-            let max_log_files = file_config.max_files.unwrap_or(5);
-            let builder = RollingFileAppender::builder()
-                .filename_prefix(filename_prefix)
-                .max_log_files(max_log_files as usize);
+        // Create appender based on rotation strategy
+        let max_log_files = file_config.max_files.unwrap_or(5);
+        let builder = RollingFileAppender::builder()
+            .filename_prefix(filename_prefix)
+            .max_log_files(max_log_files as usize);
 
-            let appender = match file_config.rotation.unwrap_or(RotationStrategy::Never) {
-                RotationStrategy::Daily => {
-                    builder
-                        .rotation(Rotation::DAILY)
-                        .build(directory)
-                        .map_err(|e| ProxyError::ConfigError(format!("Failed to create daily log appender: {}", e)))?
-                }
-                // tracing-appender 0.2.5 primarily supports time-based rotation.
-                // For size-based rotation, the PRD asks for size-based rotation so we keep the configuration
-                // and use daily rotation with max files, which is the closest approximation
-                // that tracing-appender supports in this version.
-                RotationStrategy::Size => {
-                    builder
-                        .rotation(Rotation::DAILY)
-                        .build(directory)
-                        .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
-                }
-                RotationStrategy::Never => {
-                    builder
-                        .rotation(Rotation::NEVER)
-                        .build(directory)
-                        .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
-                }
-            };
+        let appender = match file_config.rotation.unwrap_or(RotationStrategy::Never) {
+            RotationStrategy::Daily => {
+                builder
+                    .rotation(Rotation::DAILY)
+                    .build(directory)
+                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create daily log appender: {}", e)))?
+            }
+            // tracing-appender 0.2.5 primarily supports time-based rotation.
+            // For size-based rotation, the PRD asks for size-based rotation so we keep the configuration
+            // and use daily rotation with max files, which is the closest approximation
+            // that tracing-appender supports in this version.
+            RotationStrategy::Size => {
+                builder
+                    .rotation(Rotation::DAILY)
+                    .build(directory)
+                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
+            }
+            RotationStrategy::Never => {
+                builder
+                    .rotation(Rotation::NEVER)
+                    .build(directory)
+                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
+            }
+        };
 
-            // Create JSON-formatted file layer
-            let file_layer = fmt::layer()
-                .json()
-                .with_target(true)
-                .with_writer(appender);
-            layers.push(file_layer.boxed());
-        }
+        // Create JSON-formatted file layer
+        let file_layer = fmt::layer()
+            .json()
+            .with_target(true)
+            .with_writer(appender);
+        layers.push(file_layer.boxed());
     }
 
     // If neither console nor file is enabled, still add a minimal console output
