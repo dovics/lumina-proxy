@@ -87,6 +87,10 @@ pub struct StatisticsConfig {
 pub struct RouteConfig {
     /// Model name pattern (exact match for now)
     pub model_name: String,
+    /// Optional override: actual model name to send to upstream provider
+    /// If empty or not present, uses `model_name`
+    #[serde(default)]
+    pub upstream_model: Option<String>,
     /// Type of provider
     pub provider_type: ProviderType,
     /// Base URL for the API (alternative to url)
@@ -97,6 +101,16 @@ pub struct RouteConfig {
     pub api_key: String,
     /// Whether this route is enabled
     pub enabled: bool,
+}
+
+impl RouteConfig {
+    /// Get the effective upstream model name - returns upstream_model if set and non-empty, otherwise model_name
+    pub fn upstream_model(&self) -> &str {
+        self.upstream_model
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.model_name)
+    }
 }
 
 /// Main configuration structure
