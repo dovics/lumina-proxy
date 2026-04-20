@@ -217,13 +217,15 @@ async fn handle_non_streaming(
         }
 
         ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
-            let openai_resp: OpenAIChatResponse = response.json()
+            let mut openai_resp: OpenAIChatResponse = response.json()
                 .await
                 .map_err(|e| (
                     StatusCode::BAD_GATEWAY,
                     Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) }))
                 ))?;
             let tokens = openai_resp.usage.completion_tokens as usize;
+            // Override model name to client-requested name for response
+            openai_resp.model = model.clone();
             (openai_resp, tokens)
         }
     };
@@ -511,6 +513,8 @@ async fn handle_streaming(
                                 }
                                 // Ensure the response ID is consistent
                                 openai_chunk.id = id.clone();
+                                // Override model name to client-requested name
+                                openai_chunk.model = model.clone();
                                 Ok(openai_chunk)
                             }
                             Err(e) => {

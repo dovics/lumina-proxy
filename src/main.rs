@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use axum::routing::post;
-use tokio;
 
 use lumina_proxy::config::Config;
 use lumina_proxy::logging::init_logging;
