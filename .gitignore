@@ -1,1 +1,7 @@
+/target
+Cargo.lock
+*.log
+*.jsonl
+.env
+config.local.yaml
 .worktrees/

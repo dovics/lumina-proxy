@@ -1,0 +1,56 @@
+# Lumina-Proxy Configuration Example
+
+# 服务器配置
+server:
+  port: 8080
+  host: "0.0.0.0"          # 默认: "0.0.0.0"
+  auth_token: "local-secret-key"  # 可选，不设置则禁用认证
+
+# 日志配置
+logging:
+  level: "info"            # 级别: "trace", "debug", "info", "warn", "error"
+  console: true            # 启用控制台输出
+  file:
+    enabled: true          # 启用文件日志
+    path: "./lumina.log"   # 日志文件路径
+    rotation: "daily"      # 轮转策略: "daily", "size", "never"
+    max_size_mb: 100       # 按大小轮转时的最大大小
+    max_files: 5           # 保留最多多少个轮转文件
+
+# Token 统计持久化配置
+statistics:
+  enabled: true
+  file_path: "./token_stats.jsonl"  # JSONL 文件路径
+  buffer_seconds: 1.0              # 缓冲写入多少秒后刷盘，减少 IO
+
+# 路由配置
+routes:
+  - model_name: "gpt-4o"
+    provider_type: "openai"          # openai | ollama | anthropic | gemini | openai-compatible
+    base_url: "https://api.openai.com"
+    api_key: "sk-xxxx"
+    enabled: true
+
+  - model_name: "claude-3-opus"
+    provider_type: "anthropic"
+    base_url: "https://api.anthropic.com"
+    api_key: "sk-xxxx"
+    enabled: true
+
+  - model_name: "gemini-pro"
+    provider_type: "gemini"
+    base_url: "https://generativelanguage.googleapis.com"
+    api_key: "xxxx"  # Gemini API key
+    enabled: true
+
+  - model_name: "deepseek-coder"
+    provider_type: "openai-compatible"
+    url: "https://api.deepseek.com/chat/completions"
+    api_key: "sk-yyyy"
+    enabled: true
+
+  - model_name: "llama3:8b"
+    provider_type: "ollama"
+    base_url: "http://localhost:11434"  # Ollama 填写 base URL，自动拼接 /api/chat
+    api_key: "ollama"                     # Ollama 本地通常不需要，可填任意值
+    enabled: true
