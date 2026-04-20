@@ -1,15 +1,6 @@
 //! Lumina-Proxy - LLM Routing Proxy
 //! Main entry point
 
-mod config;
-mod types;
-mod convert;
-mod auth;
-mod token_counter;
-mod stats;
-mod logging;
-mod proxy;
-
 use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
