@@ -1,0 +1,21 @@
+[package]
+name = "lumina-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream", "json", "gzip"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+tiktoken-rs = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+thiserror = "1.0"
+atomic-waker = "1.0"
+bytes = "1.0"
+futures-util = "0.3"
+anyhow = "1.0"
