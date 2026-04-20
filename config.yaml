@@ -54,3 +54,11 @@ routes:
     base_url: "http://localhost:11434"  # Ollama 填写 base URL，自动拼接 /api/chat
     api_key: "ollama"                     # Ollama 本地通常不需要，可填任意值
     enabled: true
+
+  # Example with model alias: client requests "gpt-4o", proxy sends "gpt-4o-2024-08-06" to upstream
+  - model_name: "gpt-4o"
+    upstream_model: "gpt-4o-2024-08-06"
+    provider_type: "openai"
+    base_url: "https://api.openai.com"
+    api_key: "sk-xxxx"
+    enabled: true
