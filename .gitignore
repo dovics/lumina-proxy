@@ -5,3 +5,4 @@ Cargo.lock
 .env
 config.local.yaml
 .worktrees/
+docs/superpowers
