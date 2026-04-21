@@ -92,6 +92,22 @@ pub struct OpenAIStreamChoice {
     pub finish_reason: Option<String>,
 }
 
+/// OpenAI model list entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIModel {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub owned_by: String,
+}
+
+/// OpenAI /v1/models list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIModelsListResponse {
+    pub object: String,
+    pub data: Vec<OpenAIModel>,
+}
+
 // =============================================================================
 // Ollama - Native Types
 // =============================================================================
