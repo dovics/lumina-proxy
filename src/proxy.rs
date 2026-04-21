@@ -122,6 +122,8 @@ async fn handle_non_streaming(
 
     // Add authorization
     request_builder = request_builder.header("Authorization", format!("Bearer {}", route.api_key));
+    // Set content type to JSON since we're sending JSON body
+    request_builder = request_builder.header("Content-Type", "application/json");
 
     // Convert request body based on provider
     let body = match route.provider_type {
@@ -320,6 +322,8 @@ async fn handle_streaming(
     // Build and send the request
     let mut request_builder = state.client.post(backend_url.clone());
     request_builder = request_builder.header("Authorization", format!("Bearer {}", route.api_key));
+    // Set content type to JSON since we're sending JSON body
+    request_builder = request_builder.header("Content-Type", "application/json");
 
     // Some providers require specific headers for SSE
     request_builder = request_builder.header("Accept", "text/event-stream");
@@ -713,4 +717,32 @@ pub async fn proxy_handler(
             Err((status, error)) => (status, error).into_response(),
         }
     }
+}
+
+/// Axum handler for GET /v1/models - returns list of all enabled models
+pub async fn models_handler(
+    State(state): State<Arc<ProxyState>>,
+) -> impl IntoResponse {
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let data: Vec<OpenAIModel> = state.config.routes
+        .iter()
+        .filter(|route| route.enabled)
+        .map(|route| OpenAIModel {
+            id: route.model_name.clone(),
+            object: "model".to_string(),
+            created,
+            owned_by: "lumina-proxy".to_string(),
+        })
+        .collect();
+
+    let response = OpenAIModelsListResponse {
+        object: "list".to_string(),
+        data,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
 }
