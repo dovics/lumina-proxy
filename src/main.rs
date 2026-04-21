@@ -4,12 +4,12 @@
 use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
-use axum::routing::post;
+use axum::routing::{get, post};
 
 use lumina_proxy::config::Config;
 use lumina_proxy::logging::init_logging;
 use lumina_proxy::stats::StatsWriter;
-use lumina_proxy::proxy::{ProxyState, proxy_handler};
+use lumina_proxy::proxy::{ProxyState, models_handler, proxy_handler};
 use lumina_proxy::auth::auth_middleware;
 
 #[tokio::main]
@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
     // Build Axum router
     let mut router = Router::new()
         .route("/v1/chat/completions", post(proxy_handler))
+        .route("/v1/models", get(models_handler))
         .with_state(proxy_state);
 
     // Add authentication middleware if auth token is configured
