@@ -394,175 +394,252 @@ async fn handle_streaming(
         move |(mut bytes_stream, counter, id, created, model, mut buffer)| async move {
             let provider_type = provider_type;
 
-            // Get next chunk from backend
-            match bytes_stream.next().await {
-                Some(bytes_result) => {
-                    let bytes = match bytes_result {
-                        Ok(b) => b,
-                        Err(e) => {
-                            tracing::error!("Stream error: {}", e);
-                            let error_chunk: Result<Bytes, reqwest::Error> = Ok(Bytes::from(format!(
-                                "data: {{\"error\": \"{}\"}}\n\n",
-                                e
-                            )));
-                            return Some((
-                                error_chunk,
-                                (bytes_stream, counter, id, created, model, buffer)
-                            ));
+            // Continuously read and process until we have at least one chunk to yield,
+            // or the backend stream ends
+            loop {
+                // Process complete lines from buffer first (we might have leftover from last iteration)
+                let mut yielded_chunks = Vec::new();
+                while let Some(pos) = buffer.find('\n') {
+                    let line = buffer[0..pos].trim().to_string();
+                    buffer = buffer[pos+1..].to_string();
+
+                    if line.is_empty() || !line.starts_with("data: ") {
+                        continue;
+                    }
+
+                    let data = &line["data: ".len()..];
+
+                    // Log every non-DONE chunk for debugging
+                    if data.trim() != "[DONE]" {
+                        tracing::trace!("Received SSE chunk: {}", if data.len() < 500 { data } else { "<chunk too long>" });
+                    }
+
+                    // Skip [DONE] message for now, we'll add it at the end
+                    if data.trim() == "[DONE]" {
+                        continue;
+                    }
+
+                    // Parse and convert chunk based on provider
+                    let openai_chunk_result: Result<OpenAIStreamChunk, String> = match provider_type {
+                        ProviderType::Ollama => {
+                            match serde_json::from_str::<OllamaStreamChunk>(data) {
+                                Ok(ollama_chunk) => {
+                                    // Count tokens incrementally
+                                    if let Some(delta) = &ollama_chunk.delta {
+                                        counter.add_delta(&delta.content);
+                                    }
+                                    Ok(convert_ollama_stream_chunk_to_openai(
+                                        &ollama_chunk,
+                                        &id,
+                                        created,
+                                        &model
+                                    ))
+                                }
+                                Err(e) => {
+                                    Err(format!("Failed to parse Ollama stream chunk: {}", e))
+                                }
+                            }
+                        }
+
+                        ProviderType::Anthropic => {
+                            match serde_json::from_str::<AnthropicStreamChunk>(data) {
+                                Ok(anthropic_chunk) => {
+                                    if let Some(delta) = &anthropic_chunk.delta && let Some(text) = &delta.text {
+                                        counter.add_delta(text);
+                                    }
+                                    Ok(convert_anthropic_stream_chunk_to_openai(
+                                        &anthropic_chunk,
+                                        created,
+                                        &model
+                                    ))
+                                }
+                                Err(e) => {
+                                    Err(format!("Failed to parse Anthropic stream chunk: {}", e))
+                                }
+                            }
+                        }
+
+                        ProviderType::Gemini => {
+                            // Gemini SSE doesn't always use "data: " prefix, but we already handled that
+                            match serde_json::from_str::<GeminiStreamChunk>(data) {
+                                Ok(gemini_chunk) => {
+                                    // Count tokens from all candidates
+                                    for candidate in &gemini_chunk.candidates {
+                                        for part in &candidate.content.parts {
+                                            if let Some(text) = &part.text {
+                                                counter.add_delta(text);
+                                            }
+                                        }
+                                    }
+                                    Ok(convert_gemini_stream_chunk_to_openai(
+                                        &gemini_chunk,
+                                        &id,
+                                        created,
+                                        &model
+                                    ))
+                                }
+                                Err(e) => {
+                                    Err(format!("Failed to parse Gemini stream chunk: {}", e))
+                                }
+                            }
+                        }
+
+                        ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
+                            // First, try to parse as raw JSON to see the actual structure
+                            let raw_value: serde_json::Value = match serde_json::from_str(data) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    // If not valid JSON, just try the original parse
+                                    serde_json::Value::Null
+                                }
+                            };
+
+                            match serde_json::from_str::<OpenAIStreamChunk>(data) {
+                                Ok(mut openai_chunk) => {
+                                    let mut has_content = false;
+                                    // Count tokens from all choices
+                                    for choice in &openai_chunk.choices {
+                                        // Count content tokens
+                                        if let Some(content) = &choice.delta.content {
+                                            if !content.is_empty() {
+                                                counter.add_delta(content);
+                                                has_content = true;
+                                            }
+                                        }
+                                        // Also count reasoning tokens (for Kimi/OpenRouter deepseek reasoning)
+                                        if let Some(reasoning) = &choice.delta.reasoning {
+                                            if !reasoning.is_empty() {
+                                                counter.add_delta(reasoning);
+                                                has_content = true;
+                                            }
+                                        }
+                                        // Also count tool call tokens (function name and arguments)
+                                        if let Some(tool_calls) = &choice.delta.tool_calls {
+                                            for tool_call in tool_calls {
+                                                if let Some(function) = &tool_call.function {
+                                                    if let Some(name) = &function.name {
+                                                        if !name.is_empty() {
+                                                            counter.add_delta(name);
+                                                            has_content = true;
+                                                        }
+                                                    }
+                                                    if let Some(arguments) = &function.arguments {
+                                                        if !arguments.is_empty() {
+                                                            counter.add_delta(arguments);
+                                                            has_content = true;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Debug: if chunk parsed but no countable content, log at trace level
+                                    if !has_content {
+                                        tracing::trace!(
+                                            "Chunk parsed but no countable content: {}",
+                                            serde_json::to_string(&raw_value).unwrap_or_else(|_| data.to_string())
+                                        );
+                                    }
+
+                                    // Ensure the response ID is consistent
+                                    openai_chunk.id = id.clone();
+                                    // Override model name to client-requested name
+                                    openai_chunk.model = model.clone();
+                                    Ok(openai_chunk)
+                                }
+                                Err(e) => {
+                                    // Log raw data when parse fails for debugging
+                                    tracing::debug!(
+                                        "Failed to parse OpenAI stream chunk: {}, raw data: {}",
+                                        e,
+                                        if data.len() < 1000 { data } else { "data too long, see trace" }
+                                    );
+                                    Err(format!("Failed to parse OpenAI stream chunk: {}", e))
+                                }
+                            }
                         }
                     };
 
-                    // Convert bytes to string and append to buffer
-                    match String::from_utf8(bytes.to_vec()) {
-                        Ok(s) => buffer.push_str(&s),
-                        Err(_) => {
-                            tracing::warn!("Received invalid UTF-8 in stream");
+                    match openai_chunk_result {
+                        Ok(chunk) => {
+                            // Format as SSE
+                            let sse_line = format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
+                            yielded_chunks.push(Ok(Bytes::from(sse_line)));
+                        }
+                        Err(e) => {
+                            tracing::warn!("{}", e);
+                            // Send parse error to client as a warning chunk
+                            let error_chunk = serde_json::json!({
+                                "id": id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {},
+                                    "finish_reason": null
+                                }],
+                                "warning": e
+                            });
+                            let sse_line = format!("data: {}\n\n", serde_json::to_string(&error_chunk).unwrap());
+                            yielded_chunks.push(Ok(Bytes::from(sse_line)));
                         }
                     }
                 }
-                None => {
-                    // End of stream - if buffer is empty, we're done
-                    if buffer.is_empty() {
+
+                // If we have chunks to yield, return the first one now
+                if !yielded_chunks.is_empty() {
+                    let next_chunk = yielded_chunks.remove(0);
+                    // Any extra chunks get added back to the buffer
+                    for bytes in yielded_chunks.into_iter().flatten() {
+                        let s = String::from_utf8_lossy(bytes.as_ref());
+                        buffer = s.to_string() + &buffer;
+                    }
+                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer)));
+                }
+
+                // No chunks ready yet - need to read more data from backend
+                match bytes_stream.next().await {
+                    Some(bytes_result) => {
+                        let bytes = match bytes_result {
+                            Ok(b) => b,
+                            Err(e) => {
+                                tracing::error!("Stream error: {}", e);
+                                let error_chunk: Result<Bytes, reqwest::Error> = Ok(Bytes::from(format!(
+                                    "data: {{\"error\": \"{}\"}}\n\n",
+                                    e
+                                )));
+                                return Some((
+                                    error_chunk,
+                                    (bytes_stream, counter, id, created, model, buffer)
+                                ));
+                            }
+                        };
+
+                        // Convert bytes to string and append to buffer
+                        match String::from_utf8(bytes.to_vec()) {
+                            Ok(s) => buffer.push_str(&s),
+                            Err(_) => {
+                                tracing::warn!("Received invalid UTF-8 in stream");
+                            }
+                        }
+                        // Continue the loop to process the new buffer content
+                    }
+                    None => {
+                        // Backend stream truly ended
+                        if !buffer.is_empty() {
+                            tracing::debug!(
+                                "Stream ended with unprocessed buffer content: {} bytes",
+                                buffer.len()
+                            );
+                            if buffer.len() < 2000 {
+                                tracing::debug!("Unprocessed buffer: {}", buffer);
+                            }
+                        }
                         return None;
                     }
                 }
-            }
-
-            // Process lines from buffer (SSE uses newline delimiters)
-            let mut yielded_chunks = Vec::new();
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[0..pos].trim().to_string();
-                buffer = buffer[pos+1..].to_string();
-
-                if line.is_empty() || !line.starts_with("data: ") {
-                    continue;
-                }
-
-                let data = &line["data: ".len()..];
-
-                // Skip [DONE] message for now, we'll add it at the end
-                if data.trim() == "[DONE]" {
-                    continue;
-                }
-
-                // Parse and convert chunk based on provider
-                let openai_chunk_result: Result<OpenAIStreamChunk, String> = match provider_type {
-                    ProviderType::Ollama => {
-                        match serde_json::from_str::<OllamaStreamChunk>(data) {
-                            Ok(ollama_chunk) => {
-                                // Count tokens incrementally
-                                if let Some(delta) = &ollama_chunk.delta {
-                                    counter.add_delta(&delta.content);
-                                }
-                                Ok(convert_ollama_stream_chunk_to_openai(
-                                    &ollama_chunk,
-                                    &id,
-                                    created,
-                                    &model
-                                ))
-                            }
-                            Err(e) => {
-                                Err(format!("Failed to parse Ollama stream chunk: {}", e))
-                            }
-                        }
-                    }
-
-                    ProviderType::Anthropic => {
-                        match serde_json::from_str::<AnthropicStreamChunk>(data) {
-                            Ok(anthropic_chunk) => {
-                                if let Some(delta) = &anthropic_chunk.delta && let Some(text) = &delta.text {
-                                    counter.add_delta(text);
-                                }
-                                Ok(convert_anthropic_stream_chunk_to_openai(
-                                    &anthropic_chunk,
-                                    created,
-                                    &model
-                                ))
-                            }
-                            Err(e) => {
-                                Err(format!("Failed to parse Anthropic stream chunk: {}", e))
-                            }
-                        }
-                    }
-
-                    ProviderType::Gemini => {
-                        // Gemini SSE doesn't always use "data: " prefix, but we already handled that
-                        match serde_json::from_str::<GeminiStreamChunk>(data) {
-                            Ok(gemini_chunk) => {
-                                // Count tokens from all candidates
-                                for candidate in &gemini_chunk.candidates {
-                                    for part in &candidate.content.parts {
-                                        if let Some(text) = &part.text {
-                                            counter.add_delta(text);
-                                        }
-                                    }
-                                }
-                                Ok(convert_gemini_stream_chunk_to_openai(
-                                    &gemini_chunk,
-                                    &id,
-                                    created,
-                                    &model
-                                ))
-                            }
-                            Err(e) => {
-                                Err(format!("Failed to parse Gemini stream chunk: {}", e))
-                            }
-                        }
-                    }
-
-                    ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
-                        match serde_json::from_str::<OpenAIStreamChunk>(data) {
-                            Ok(mut openai_chunk) => {
-                                // Count tokens from all choices
-                                for choice in &openai_chunk.choices {
-                                    if let Some(delta) = &choice.delta.content {
-                                        counter.add_delta(delta);
-                                    }
-                                }
-                                // Ensure the response ID is consistent
-                                openai_chunk.id = id.clone();
-                                // Override model name to client-requested name
-                                openai_chunk.model = model.clone();
-                                Ok(openai_chunk)
-                            }
-                            Err(e) => {
-                                Err(format!("Failed to parse OpenAI stream chunk: {}", e))
-                            }
-                        }
-                    }
-                };
-
-                match openai_chunk_result {
-                    Ok(chunk) => {
-                        // Format as SSE
-                        let sse_line = format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
-                        yielded_chunks.push(Ok(Bytes::from(sse_line)));
-                    }
-                    Err(e) => {
-                        tracing::warn!("{}", e);
-                    }
-                }
-            }
-
-            if !yielded_chunks.is_empty() {
-                // Return the first chunk and keep remaining for next iteration
-                let next_chunk = yielded_chunks.remove(0);
-                // Any extra chunks get added back to the buffer by converting them
-                // This is a bit of a hack but it works
-                for bytes in yielded_chunks.into_iter().flatten() {
-                    // Convert SSE format back to data line for reprocessing
-                    let s = String::from_utf8_lossy(bytes.as_ref());
-                    // The SSE is already "data: ...\n\n" so just add it to buffer
-                    buffer = s.to_string() + &buffer;
-                }
-                Some((next_chunk, (bytes_stream, counter, id, created, model, buffer)))
-            } else if buffer.is_empty() {
-                // No chunks yielded and we're at end of stream
-                None
-            } else {
-                // No chunks in this iteration but we still have buffer content - it means no complete lines yet
-                // Just keep waiting for more data, continue the loop by returning None (end of iteration)
-                None
             }
         }
     );
@@ -586,9 +663,10 @@ async fn handle_streaming(
             prompt_tokens,
             start_time,
             token_counter_clone,
-            false
+            false,
+            0 // chunk counter - detect if we got any valid chunks
         ),
-        |(mut stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, done)| async move {
+        |(mut stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, done, chunk_count)| async move {
             if done {
                 return None;
             }
@@ -596,12 +674,85 @@ async fn handle_streaming(
             // Use poll_next with pinned projection to avoid Unpin issue
             use futures_util::StreamExt;
             match stream.next().await {
-                Some(item) => Some((item, (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, false))),
+                Some(item) => {
+                    // Got a valid chunk, increment counter
+                    Some((item, (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, false, chunk_count + 1)))
+                },
                 None => {
-                    // Stream is complete, write stats
+                    // Stream is complete, check if we got any valid chunks
                     let completion_tokens = token_counter_clone.total();
                     let total_tokens = prompt_tokens + completion_tokens;
                     let duration_ms = start_time.elapsed().as_millis() as u64;
+
+                    // If no completion tokens were counted, log detailed debugging info
+                    if completion_tokens == 0 {
+                        tracing::warn!(
+                            model = %model,
+                            provider = %format!("{:?}", provider_type),
+                            duration_ms = %duration_ms,
+                            chunks_received = %chunk_count,
+                            prompt_tokens = %prompt_tokens,
+                            "Zero completion tokens detected - possible tool calls or empty response"
+                        );
+                    }
+
+                    // If no chunks were received and no completion tokens were counted,
+                    // the model returned an empty response - send an error first
+                    if chunk_count == 0 {
+                        tracing::error!(
+                            model = %model,
+                            provider = %format!("{:?}", provider_type),
+                            duration_ms = %duration_ms,
+                            prompt_tokens = %prompt_tokens,
+                            "CRITICAL: Model returned no response chunks at all - upstream may have failed"
+                        );
+
+                        let error_chunk = serde_json::json!({
+                            "id": format!("chatcmpl-{}", std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0)),
+                            "object": "chat.completion.chunk",
+                            "created": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {
+                                    "content": "The model returned no response. This can happen if the upstream service had an error or returned an empty response."
+                                },
+                                "finish_reason": "stop"
+                            }]
+                        });
+
+                        let error_sse = format!("data: {}\n\n", serde_json::to_string(&error_chunk).unwrap());
+
+                        // Write stats with error status
+                        if let Some(stats_writer) = stats_writer.as_ref() {
+                            let stats = TokenStats {
+                                timestamp: Utc::now(),
+                                model: model.clone(),
+                                provider: format!("{:?}", provider_type).to_lowercase(),
+                                prompt_tokens,
+                                completion_tokens,
+                                total_tokens,
+                                duration_ms,
+                                status: "error".to_string(),
+                                error_message: Some("Model returned no response chunks".to_string()),
+                            };
+                            if let Err(e) = stats_writer.write_stat(stats).await {
+                                tracing::warn!("Failed to write statistics: {}", e);
+                            }
+                        }
+
+                        // Send error chunk first, then [DONE]
+                        return Some((
+                            Ok(Bytes::from(error_sse)),
+                            (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, true, chunk_count)
+                        ));
+                    }
 
                     tracing::info!(
                         model = %model,
@@ -610,6 +761,7 @@ async fn handle_streaming(
                         completion_tokens = %completion_tokens,
                         total_tokens = %total_tokens,
                         duration_ms = %duration_ms,
+                        chunks = %chunk_count,
                         "Completed streaming request"
                     );
 
@@ -633,7 +785,7 @@ async fn handle_streaming(
                     // Send final [DONE]
                     Some((
                         Ok(Bytes::from("data: [DONE]\n\n")),
-                        (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, true)
+                        (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, true, chunk_count)
                     ))
                 }
             }
@@ -890,6 +1042,9 @@ pub async fn reload_config_handler(
         || new_config.statistics.buffer_seconds != current_config.statistics.buffer_seconds
     {
         warnings.push("Statistics file/buffer configuration changes require server restart to take effect".to_string());
+    }
+    if new_config.server.proxy != current_config.server.proxy {
+        warnings.push("Proxy configuration changes require server restart to take effect".to_string());
     }
 
     // Update the configuration atomically

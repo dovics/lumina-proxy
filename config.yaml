@@ -5,10 +5,15 @@ server:
   port: 8080
   host: "0.0.0.0"          # 默认: "0.0.0.0"
   auth_token: "local-secret-key"  # 可选，不设置则禁用认证
+  # 代理配置（可选）- 所有出站请求将通过该代理
+  # 注意: no_proxy 目前可通过 NO_PROXY 环境变量设置
+  # proxy:
+  #   http: "http://proxy.example.com:8080"   # HTTP 代理
+  #   https: "http://proxy.example.com:8080"  # HTTPS 代理
 
 # 日志配置
 logging:
-  level: "info"            # 级别: "trace", "debug", "info", "warn", "error"
+  level: "trace"            # 级别: "trace", "debug", "info", "warn", "error"
   console: false           # 启用控制台输出 (默认: false)
   file:
     enabled: true          # 启用文件日志

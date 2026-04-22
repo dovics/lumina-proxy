@@ -63,6 +63,15 @@ pub struct LoggingConfig {
     pub file: Option<FileLoggingConfig>,
 }
 
+/// HTTP proxy configuration
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ProxyConfig {
+    /// HTTP proxy URL (e.g., http://proxy.example.com:8080)
+    pub http: Option<String>,
+    /// HTTPS proxy URL (e.g., http://proxy.example.com:8080)
+    pub https: Option<String>,
+}
+
 /// Server configuration
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ServerConfig {
@@ -72,6 +81,8 @@ pub struct ServerConfig {
     pub host: String,
     /// Authentication token required for requests (optional)
     pub auth_token: Option<String>,
+    /// HTTP proxy configuration for outgoing requests
+    pub proxy: Option<ProxyConfig>,
 }
 
 /// Statistics configuration

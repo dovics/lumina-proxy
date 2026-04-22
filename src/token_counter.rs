@@ -49,8 +49,8 @@ impl IncrementalTokenCounter {
     pub fn add_delta(&self, content: &str) -> usize {
         let tokens = DEFAULT_TOKENIZER.encode_with_special_tokens(content);
         let added = tokens.len();
-        self.count.fetch_add(added, Ordering::SeqCst);
-        self.count.load(Ordering::SeqCst)
+        let prev = self.count.fetch_add(added, Ordering::SeqCst);
+        prev + added
     }
 
     /// Get the current total token count

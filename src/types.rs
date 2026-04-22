@@ -65,12 +65,42 @@ pub struct OpenAIUsage {
 }
 
 /// Delta content for streaming responses
+/// Tool call function in delta
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIToolCallFunction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
+}
+
+/// Tool call in delta
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIToolCall {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<OpenAIToolCallFunction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
 /// Streaming chunk for OpenAI format

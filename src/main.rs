@@ -77,17 +77,41 @@ async fn main() -> Result<()> {
     run_server(config, config_path, shutdown_rx).await
 }
 
-/// Run the Axum server with graceful shutdown support - uses shared config for Windows tray integration
+/// Build reqwest Client with proxy configuration
+fn build_client(config: &Config) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder();
+
+    // Apply proxy configuration if configured
+    if let Some(proxy_config) = &config.server.proxy {
+        // HTTP proxy
+        if let Some(http_proxy) = &proxy_config.http {
+            let proxy = reqwest::Proxy::http(http_proxy)?;
+            builder = builder.proxy(proxy);
+        }
+
+        // HTTPS proxy
+        if let Some(https_proxy) = &proxy_config.https {
+            let proxy = reqwest::Proxy::https(https_proxy)?;
+            builder = builder.proxy(proxy);
+        }
+
+        // No proxy (bypass list) - handled via reqwest Proxy::custom or environment variables
+        // For no_proxy support, users can also set NO_PROXY environment variable
+    }
+
+    Ok(builder.build()?)
+}
+
 async fn run_server_with_shared_config(
     shared_config: Arc<ArcSwap<Config>>,
     config_path: String,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) -> Result<()> {
-    // Initialize HTTP client
-    let client = reqwest::Client::new();
-
     // Get a snapshot of current config for initialization
     let config = shared_config.load();
+
+    // Initialize HTTP client with proxy support
+    let client = build_client(&config)?;
 
     // Initialize stats writer if statistics enabled
     let stats_writer = if config.statistics.enabled {

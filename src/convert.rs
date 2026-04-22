@@ -83,6 +83,7 @@ pub fn convert_ollama_stream_chunk_to_openai(
                     None
                 },
                 content,
+                ..Default::default()
             },
             finish_reason: if chunk.done {
                 Some("stop".to_string())
@@ -202,6 +203,7 @@ pub fn convert_anthropic_stream_chunk_to_openai(
                     None
                 },
                 content: text,
+                ..Default::default()
             },
             finish_reason,
         }],
@@ -330,6 +332,7 @@ pub fn convert_gemini_stream_chunk_to_openai(
                         None
                     },
                     content: if content.is_empty() { None } else { Some(content) },
+                    ..Default::default()
                 },
                 finish_reason,
             }

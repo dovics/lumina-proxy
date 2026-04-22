@@ -1,8 +1,10 @@
 /target
 Cargo.lock
-*.log
+*.log*
 *.jsonl
 .env
 config.local.yaml
 .worktrees/
 docs/superpowers
+
+*.local
