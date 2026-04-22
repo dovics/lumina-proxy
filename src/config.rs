@@ -54,7 +54,8 @@ pub struct FileLoggingConfig {
 pub struct LoggingConfig {
     /// Log level (trace, debug, info, warn, error)
     pub level: String,
-    /// Whether to enable console logging
+    /// Whether to enable console logging (default: false)
+    #[serde(default)]
     pub console: bool,
     /// File logging configuration
     pub file: Option<FileLoggingConfig>,

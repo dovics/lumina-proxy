@@ -735,7 +735,7 @@ pub async fn models_handler(
             id: route.model_name.clone(),
             object: "model".to_string(),
             created,
-            owned_by: "lumina-proxy".to_string(),
+            owned_by: "lumina".to_string(),
         })
         .collect();
 

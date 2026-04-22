@@ -1,5 +1,5 @@
 [package]
-name = "lumina-proxy"
+name = "lumina"
 version = "0.1.0"
 edition = "2024"
 
@@ -24,5 +24,4 @@ chrono = { version = "0.4", features = ["serde", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.15"
-muda = "0.12"
 tao = "0.28"

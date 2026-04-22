@@ -102,15 +102,8 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), ProxyError> {
         layers.push(file_layer.boxed());
     }
 
-    // If neither console nor file is enabled, still add a minimal console output
-    // to avoid silent failure
-    if layers.is_empty() {
-        let console_layer = fmt::layer()
-            .with_target(true)
-            .with_ansi(true)
-            .with_writer(std::io::stdout);
-        layers.push(console_layer.boxed());
-    }
+    // If neither console nor file is enabled, run silently (no output)
+    // This allows the proxy to run without any logging output when desired
 
     // Build and set the global subscriber
     tracing_subscriber::Registry::default()

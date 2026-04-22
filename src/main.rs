@@ -1,19 +1,21 @@
 //! Lumina-Proxy - LLM Routing Proxy
 //! Main entry point
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::sync::Arc;
 use anyhow::Result;
 use axum::Router;
 use axum::routing::{get, post};
 use tokio::sync::mpsc;
 
-use lumina_proxy::config::Config;
-use lumina_proxy::logging::init_logging;
-use lumina_proxy::stats::StatsWriter;
-use lumina_proxy::proxy::{ProxyState, models_handler, proxy_handler};
-use lumina_proxy::auth::auth_middleware;
+use lumina::config::Config;
+use lumina::logging::init_logging;
+use lumina::stats::StatsWriter;
+use lumina::proxy::{ProxyState, models_handler, proxy_handler};
+use lumina::auth::auth_middleware;
 #[cfg(windows)]
-use lumina_proxy::tray::TrayManager;
+use lumina::tray::TrayManager;
 
 #[cfg(windows)]
 fn main() -> Result<()> {

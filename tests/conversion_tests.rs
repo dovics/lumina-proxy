@@ -1,4 +1,4 @@
-use lumina_proxy::convert::{
+use lumina::convert::{
     convert_openai_to_ollama, convert_ollama_to_openai,
     convert_ollama_stream_chunk_to_openai,
     convert_openai_to_anthropic, convert_anthropic_to_openai,
@@ -6,7 +6,7 @@ use lumina_proxy::convert::{
     convert_openai_to_gemini, convert_gemini_to_openai,
     convert_gemini_stream_chunk_to_openai,
 };
-use lumina_proxy::types::{
+use lumina::types::{
     OpenAIChatRequest, OpenAIMessage,
     OllamaChatResponse, OllamaStreamChunk, OllamaDelta, OllamaMessage,
     AnthropicChatResponse, AnthropicStreamChunk, AnthropicDelta, AnthropicContent, AnthropicUsage,

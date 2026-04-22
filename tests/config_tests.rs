@@ -1,4 +1,4 @@
-use lumina_proxy::config::{Config, ProviderType};
+use lumina::config::{Config, ProviderType};
 
 #[test]
 fn test_parse_valid_config() {

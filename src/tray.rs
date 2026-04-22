@@ -7,32 +7,26 @@ use anyhow::Result;
 pub mod imp {
     use super::*;
     use anyhow::Context;
-    use muda::{Menu, MenuItem, PredefinedMenuItem};
     use tao::event_loop::{EventLoop, ControlFlow};
-    use tray_icon::{TrayIconBuilder, Icon};
     use tokio::sync::mpsc;
+    use tray_icon::{
+        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+        TrayIconBuilder, Icon,
+    };
 
-    /// Tray manager for Windows system tray
     pub struct TrayManager {
         shutdown_tx: mpsc::Sender<()>,
     }
 
     impl TrayManager {
-        /// Create a new tray manager
         pub fn new(shutdown_tx: mpsc::Sender<()>) -> Result<Self> {
             Ok(Self { shutdown_tx })
         }
 
-        /// Run the tray event loop (blocks the thread)
-        /// This must run on the main thread on Windows for proper message loop
         pub fn run(self, server_addr: String) -> Result<()> {
-            // Create the menu
             let menu = Self::build_menu(&server_addr);
-
-            // Load icon - use built-in default if no embedded icon
             let icon = Self::load_icon()?;
 
-            // Create tray icon
             let _tray_icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
                 .with_icon(icon)
@@ -40,25 +34,22 @@ pub mod imp {
                 .build()
                 .context("Failed to create tray icon")?;
 
-            // Create event loop
             let event_loop = EventLoop::new();
             let shutdown_tx = self.shutdown_tx;
+            let exit_item_id = "exit";
 
-            // Run event loop (blocks)
             event_loop.run(move |_event, _, control_flow| {
                 *control_flow = ControlFlow::Wait;
 
-                // Check for menu events
-                if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
-                    if event.id() == "exit" {
-                        // Send shutdown signal (best effort, non-blocking)
+                if let Ok(event) = MenuEvent::receiver().try_recv() {
+                    if event.id == exit_item_id {
                         let _ = shutdown_tx.try_send(());
-                        // Exit the event loop
                         *control_flow = ControlFlow::Exit;
                     }
                 }
             });
 
+            #[allow(unreachable_code)]
             Ok(())
         }
 
@@ -67,14 +58,13 @@ pub mod imp {
                 format!("🟢 服务器运行中\n{}", server_addr),
                 false,
                 None,
-                None,
             );
 
-            let exit_item = MenuItem::new(
+            let exit_item = MenuItem::with_id(
+                "exit",
                 "退出",
                 true,
                 None,
-                Some("exit".into()),
             );
 
             let menu = Menu::new();
@@ -88,14 +78,19 @@ pub mod imp {
         }
 
         fn load_icon() -> Result<Icon> {
-            // First try to use the embedded icon
-            static ICON_DATA: &[u8] = include_bytes!("../../assets/icon.ico");
-            match Icon::from_bytes(ICON_DATA, None) {
+            static ICON_RASTER: &[u8] = include_bytes!("../assets/icon.rgba");
+            const SIZE: u32 = 64;
+
+            match Icon::from_rgba(ICON_RASTER.to_vec(), SIZE, SIZE) {
                 Ok(icon) => Ok(icon),
                 Err(_) => {
-                    // Fallback: create a simple RGBA icon (red square)
                     tracing::warn!("Failed to load embedded icon, using fallback");
-                    Icon::from_rgba(vec![255, 0, 0, 255; 256 * 256 * 4], 256, 256)
+                    let pixel: [u8; 4] = [0, 120, 215, 255];
+                    let rgba_data = std::iter::repeat(&pixel)
+                        .take((SIZE * SIZE) as usize)
+                        .flat_map(|p| p.iter().copied())
+                        .collect::<Vec<u8>>();
+                    Icon::from_rgba(rgba_data, SIZE, SIZE)
                         .context("Failed to create fallback tray icon")
                 }
             }
