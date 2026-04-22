@@ -25,7 +25,5 @@ anyhow = "1.0"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde", "std"] }
 arc-swap = "1.0"
-
-[target.'cfg(windows)'.dependencies]
 tray-icon = "0.15"
 tao = "0.28"

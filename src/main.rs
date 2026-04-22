@@ -15,13 +15,11 @@ use lumina::logging::init_logging;
 use lumina::stats::StatsWriter;
 use lumina::proxy::{ProxyState, models_handler, proxy_handler, reload_config_handler, get_config_handler};
 use lumina::auth::auth_middleware;
-#[cfg(windows)]
 use lumina::tray::TrayManager;
 
-#[cfg(windows)]
 fn main() -> Result<()> {
-    // Windows: Tao event loop must run on main thread
-    // So we run Axum on a background thread
+    // All platforms: Tao event loop must run on main thread for proper tray support
+    // So we run Axum on a background thread for all platforms
 
     // Get config path from command line argument or use default
     let config_path = std::env::args()
@@ -50,7 +48,7 @@ fn main() -> Result<()> {
         rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx))
     });
 
-    // Run tray on main thread (Windows only) - pass shared config for reload functionality
+    // Run tray on main thread
     tracing::info!("Starting tray on main thread");
     if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr) {
         tracing::warn!("Tray failed to start: {}, running without tray", e);
@@ -60,21 +58,6 @@ fn main() -> Result<()> {
     server_handle.join().unwrap()?;
 
     Ok(())
-}
-
-#[cfg(not(windows))]
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Non-Windows: Simple, just run Axum on main thread
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "./config.yaml".to_string());
-
-    let config = Config::load_from_file(&config_path)?;
-    init_logging(&config.logging)?;
-
-    let (_shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-    run_server(config, config_path, shutdown_rx).await
 }
 
 /// Build reqwest Client with proxy configuration
@@ -162,9 +145,3 @@ async fn run_server_with_shared_config(
     Ok(())
 }
 
-/// Simple wrapper for non-Windows platforms - creates a new config instance
-#[cfg(not(windows))]
-async fn run_server(config: Config, config_path: String, shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
-    let shared_config = Arc::new(ArcSwap::from_pointee(config));
-    run_server_with_shared_config(shared_config, config_path, shutdown_rx).await
-}

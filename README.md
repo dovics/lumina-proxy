@@ -1,58 +1,69 @@
 # Lumina-Proxy
 
-一个高性能的 LLM 路由代理，支持多种后端提供商，具有配置热重载和 Windows 系统托盘集成。
+[![Build](https://github.com/your-username/lumina-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/your-username/lumina-proxy/actions/workflows/build.yml)
 
-## 功能特性
+A high-performance LLM routing proxy supporting multiple backend providers with hot config reload and Windows system tray integration.
 
-- 🌐 **多提供商支持**: OpenAI、Anthropic、Gemini、Ollama 和 OpenAI 兼容 API
-- 🔄 **配置热重载**: 无需重启即可通过 API 或系统托盘更新配置
-- 📊 **Token 统计**: 精确的 Token 使用量统计和持久化
-- 🔒 **认证保护**: 可选的 API Token 认证保护
-- 🖥️ **Windows 系统托盘**: 原生系统托盘集成，支持快速操作
-- ⚡ **高性能**: 基于 Axum 和 Tokio 异步运行时
-- 📝 **灵活日志**: 支持控制台和文件日志，支持按日期/大小轮转
-- 🔀 **模型别名**: 支持客户端模型名到上游模型名的映射
+## Features
 
-## 支持的提供商
+- 🌐 **Multi-provider Support**: OpenAI, Anthropic, Gemini, Ollama, and OpenAI-compatible APIs
+- 🔄 **Hot Config Reload**: Update configuration via API or system tray without restart
+- 📊 **Token Statistics**: Accurate token usage counting and persistence
+- 🔒 **Authentication**: Optional API token authentication protection
+- 🖥️ **Cross-Platform System Tray**: Native system tray for Windows, macOS, and Linux with quick actions
+- ⚡ **High Performance**: Built on Axum and Tokio async runtime
+- 📝 **Flexible Logging**: Console and file logging with date/size rotation
+- 🔀 **Model Aliasing**: Map client model names to upstream model names
 
-| 提供商 | 类型 | 端点 |
-|--------|------|------|
+## Supported Providers
+
+| Provider | Type | Endpoint |
+|----------|------|----------|
 | OpenAI | `openai` | `/v1/chat/completions` |
 | Anthropic | `anthropic` | `/v1/messages` |
 | Google Gemini | `gemini` | `streamGenerateContent` |
 | Ollama | `ollama` | `/api/chat` |
-| OpenAI 兼容 | `openai-compatible` | 自定义 URL |
+| OpenAI-compatible | `openai-compatible` | Custom URL |
 
-## 快速开始
+## Quick Start
 
-### 编译
+### Download Pre-built Binaries
+
+You can download pre-built binaries from the [Releases](https://github.com/your-username/lumina-proxy/releases) page:
+
+- **Windows**: `lumina-windows-x86_64.zip` (with system tray support)
+- **Linux**: `lumina-linux-x86_64.tar.gz`
+- **macOS (Intel)**: `lumina-macos-x86_64.tar.gz`
+- **macOS (Apple Silicon)**: `lumina-macos-aarch64.tar.gz`
+
+### Build from Source
 
 ```bash
 cargo build --release
 ```
 
-### 运行
+### Run
 
 ```bash
-# 使用默认配置文件 ./config.yaml
+# Use default config file ./config.yaml
 ./target/release/lumina
 
-# 或指定配置文件路径
+# Or specify a config file path
 ./target/release/lumina /path/to/config.yaml
 ```
 
-## 配置
+## Configuration
 
-参考 `config.yaml` 示例：
+Refer to the `config.yaml` example:
 
 ```yaml
-# 服务器配置
+# Server configuration
 server:
   port: 8080
   host: "0.0.0.0"
-  auth_token: "your-secret-key"  # 可选
+  auth_token: "your-secret-key"  # Optional
 
-# 日志配置
+# Logging configuration
 logging:
   level: "info"
   console: false
@@ -63,13 +74,13 @@ logging:
     max_size_mb: 100
     max_files: 5
 
-# Token 统计
+# Token statistics
 statistics:
   enabled: true
   file_path: "./token_stats.jsonl"
   buffer_seconds: 1.0
 
-# 路由配置
+# Route configuration
 routes:
   - model_name: "gpt-4o"
     provider_type: "openai"
@@ -84,49 +95,69 @@ routes:
     enabled: true
 ```
 
-### 模型别名
+### Model Aliasing
 
-可以将客户端请求的模型名映射到不同的上游模型名：
+Map client-requested model names to different upstream model names:
 
 ```yaml
 routes:
-  - model_name: "gpt-4o"              # 客户端请求的模型名
-    upstream_model: "gpt-4o-2024-08-06"  # 实际发送给上游的模型名
+  - model_name: "gpt-4o"              # Client-requested model name
+    upstream_model: "gpt-4o-2024-08-06"  # Actual upstream model name
     provider_type: "openai"
     base_url: "https://api.openai.com"
     api_key: "sk-xxxx"
     enabled: true
 ```
 
-## API 端点
+## API Endpoints
 
-### 代理端点
+### Proxy Endpoints
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/v1/chat/completions` | 聊天补全（流式和非流式） |
-| GET | `/v1/models` | 列出可用模型 |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/chat/completions` | Chat completions (streaming and non-streaming) |
+| GET | `/v1/models` | List available models |
 
-### 管理端点
+### Admin Endpoints
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/v1/admin/reload-config` | 重新加载配置文件 |
-| GET | `/v1/admin/config` | 获取当前配置（脱敏） |
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/admin/reload-config` | Reload configuration file |
+| GET | `/v1/admin/config` | Get current configuration (redacted) |
 
-**重载配置示例**:
+**Reload config example**:
 ```bash
 curl -X POST http://localhost:8080/v1/admin/reload-config
 ```
 
-## Windows 系统托盘
+## Cross-Platform System Tray
 
-在 Windows 上运行时，Lumina 会在系统托盘中显示图标，支持：
-- 查看服务器地址
-- 快速重载配置
-- 退出程序
+Lumina displays a system tray icon on **Windows, macOS, and Linux** with:
+- View server address
+- Quick config reload
+- Open config file in default editor
+- Show current config summary
+- Exit application
+- **Internationalization**: Chinese/English menu based on system language (LANG environment variable)
 
-## 架构
+### Platform-Specific Requirements
+
+#### Linux
+Install system dependencies before building:
+```bash
+# Ubuntu/Debian
+sudo apt-get install libayatana-appindicator3-dev
+```
+
+Requires a desktop environment supporting AppIndicator (GNOME, KDE, Xfce, etc.). In headless environments, Lumina automatically falls back to running without the tray.
+
+#### macOS
+No additional dependencies. For proper Dock icon behavior (no Dock icon shown), build as a proper app bundle with Info.plist containing `LSUIElement = true`. In SSH/CI environments, Lumina automatically falls back to running without the tray.
+
+#### Windows
+No additional dependencies required. Uses native Win32 API. Defaults to Chinese UI for backward compatibility.
+
+## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐
@@ -141,20 +172,34 @@ curl -X POST http://localhost:8080/v1/admin/reload-config
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
-核心组件：
-- **`ProxyState`**: 使用 `ArcSwap` 实现无锁原子配置更新
-- **配置验证**: 重载时自动验证配置有效性，失败时保留旧配置
-- **Token 统计**: 精确计数输入/输出 Token，支持异步刷盘
+Core components:
+- **`ProxyState`**: Lock-free atomic config updates using `ArcSwap`
+- **Config Validation**: Automatically validates config on reload, retains old config on failure
+- **Token Statistics**: Accurate input/output token counting with async flushing
 
-## 技术栈
+## CI/CD
 
-- **Web 框架**: [Axum](https://github.com/tokio-rs/axum)
-- **运行时**: [Tokio](https://tokio.rs/)
-- **配置**: `serde` + `serde_yaml`
-- **原子更新**: `arc-swap`
-- **系统托盘**: `tray-icon` + `tao` (Windows)
-- **Token 计数**: `tiktoken-rs`
+GitHub Actions automatically builds and tests the project on every push and pull request:
 
-## 许可证
+| Platform | Target | Notes |
+|----------|--------|-------|
+| Windows x64 | `x86_64-pc-windows-msvc` | ✓ Embedded icon, system tray support |
+| Linux x64 | `x86_64-unknown-linux-gnu` | |
+| macOS Intel | `x86_64-apple-darwin` | |
+| macOS Apple Silicon | `aarch64-apple-darwin` | |
+
+Build artifacts are available for download from the Actions page after each successful build.
+
+## Tech Stack
+
+- **Web Framework**: [Axum](https://github.com/tokio-rs/axum)
+- **Runtime**: [Tokio](https://tokio.rs/)
+- **Configuration**: `serde` + `serde_yaml`
+- **Atomic Updates**: `arc-swap`
+- **System Tray**: `tray-icon` + `tao` (Windows, macOS, Linux)
+- **Token Counting**: `tiktoken-rs`
+- **CI/CD**: GitHub Actions
+
+## License
 
 MIT License
