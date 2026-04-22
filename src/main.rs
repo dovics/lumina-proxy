@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use axum::Router;
 use axum::routing::{get, post};
 use tokio::sync::mpsc;
@@ -12,7 +13,7 @@ use tokio::sync::mpsc;
 use lumina::config::Config;
 use lumina::logging::init_logging;
 use lumina::stats::StatsWriter;
-use lumina::proxy::{ProxyState, models_handler, proxy_handler};
+use lumina::proxy::{ProxyState, models_handler, proxy_handler, reload_config_handler, get_config_handler};
 use lumina::auth::auth_middleware;
 #[cfg(windows)]
 use lumina::tray::TrayManager;
@@ -36,18 +37,22 @@ fn main() -> Result<()> {
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
+    // Create shared configuration - accessible from both server and tray
+    let shared_config = Arc::new(ArcSwap::from_pointee(config));
+
     // Spawn Axum server on a background thread
-    let server_addr = format!("{}:{}", config.server.host, config.server.port);
-    let server_config = config.clone();
+    let server_addr = format!("{}:{}", shared_config.load().server.host, shared_config.load().server.port);
+    let server_config = shared_config.clone();
+    let server_config_path = config_path.clone();
     let server_handle = std::thread::spawn(move || {
         // Create a tokio runtime for the server thread
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(run_server(server_config, shutdown_rx))
+        rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx))
     });
 
-    // Run tray on main thread (Windows only)
+    // Run tray on main thread (Windows only) - pass shared config for reload functionality
     tracing::info!("Starting tray on main thread");
-    if let Err(e) = TrayManager::new(shutdown_tx)?.run(server_addr) {
+    if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr) {
         tracing::warn!("Tray failed to start: {}, running without tray", e);
     }
 
@@ -69,13 +74,20 @@ async fn main() -> Result<()> {
     init_logging(&config.logging)?;
 
     let (_shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-    run_server(config, shutdown_rx).await
+    run_server(config, config_path, shutdown_rx).await
 }
 
-/// Run the Axum server with graceful shutdown support
-async fn run_server(config: Config, mut shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
+/// Run the Axum server with graceful shutdown support - uses shared config for Windows tray integration
+async fn run_server_with_shared_config(
+    shared_config: Arc<ArcSwap<Config>>,
+    config_path: String,
+    mut shutdown_rx: mpsc::Receiver<()>,
+) -> Result<()> {
     // Initialize HTTP client
     let client = reqwest::Client::new();
+
+    // Get a snapshot of current config for initialization
+    let config = shared_config.load();
 
     // Initialize stats writer if statistics enabled
     let stats_writer = if config.statistics.enabled {
@@ -84,23 +96,28 @@ async fn run_server(config: Config, mut shutdown_rx: mpsc::Receiver<()>) -> Resu
         None
     };
 
-    // Create proxy state
+    // Create proxy state - use the shared config from Windows main thread
     let proxy_state = Arc::new(ProxyState {
-        config: config.clone(),
+        config: shared_config,
+        config_path: config_path.clone(),
         client,
-        stats_writer,
+        stats_writer: Arc::new(ArcSwap::from_pointee(stats_writer)),
     });
 
     // Build Axum router
     let mut router = Router::new()
         .route("/v1/chat/completions", post(proxy_handler))
         .route("/v1/models", get(models_handler))
-        .with_state(proxy_state);
+        .route("/v1/admin/reload-config", post(reload_config_handler))
+        .route("/v1/admin/config", get(get_config_handler));
 
     // Add authentication middleware if auth token is configured
     if config.server.auth_token.is_some() {
-        router = router.layer(axum::middleware::from_fn_with_state(config.clone(), auth_middleware));
+        router = router.layer(axum::middleware::from_fn_with_state(proxy_state.clone(), auth_middleware));
     }
+
+    // Add proxy state to router
+    let router = router.with_state(proxy_state);
 
     // Bind to configured host/port and serve with graceful shutdown
     let addr = format!("{}:{}", config.server.host, config.server.port);
@@ -119,4 +136,11 @@ async fn run_server(config: Config, mut shutdown_rx: mpsc::Receiver<()>) -> Resu
 
     tracing::info!("Server shutdown complete");
     Ok(())
+}
+
+/// Simple wrapper for non-Windows platforms - creates a new config instance
+#[cfg(not(windows))]
+async fn run_server(config: Config, config_path: String, shutdown_rx: mpsc::Receiver<()>) -> Result<()> {
+    let shared_config = Arc::new(ArcSwap::from_pointee(config));
+    run_server_with_shared_config(shared_config, config_path, shutdown_rx).await
 }

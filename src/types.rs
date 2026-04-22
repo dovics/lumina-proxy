@@ -99,6 +99,12 @@ pub struct OpenAIModel {
     pub object: String,
     pub created: u64,
     pub owned_by: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_model_len: Option<u32>,
 }
 
 /// OpenAI /v1/models list response

@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::fs;
 use anyhow::Result;
+use chrono::Utc;
+use std::collections::HashSet;
 
 /// Rotation strategy for log files
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -35,7 +37,7 @@ pub enum ProviderType {
 }
 
 /// File logging configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct FileLoggingConfig {
     /// Whether file logging is enabled
     pub enabled: bool,
@@ -50,7 +52,7 @@ pub struct FileLoggingConfig {
 }
 
 /// Logging configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct LoggingConfig {
     /// Log level (trace, debug, info, warn, error)
     pub level: String,
@@ -62,7 +64,7 @@ pub struct LoggingConfig {
 }
 
 /// Server configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ServerConfig {
     /// Port to listen on
     pub port: u16,
@@ -73,7 +75,7 @@ pub struct ServerConfig {
 }
 
 /// Statistics configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct StatisticsConfig {
     /// Whether statistics collection is enabled
     pub enabled: bool,
@@ -84,7 +86,7 @@ pub struct StatisticsConfig {
 }
 
 /// Route configuration for a model to backend provider
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct RouteConfig {
     /// Model name pattern (exact match for now)
     pub model_name: String,
@@ -115,7 +117,7 @@ impl RouteConfig {
 }
 
 /// Main configuration structure
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Config {
     /// Server configuration
     pub server: ServerConfig,
@@ -125,13 +127,84 @@ pub struct Config {
     pub statistics: StatisticsConfig,
     /// List of routes mapping models to backends
     pub routes: Vec<RouteConfig>,
+    /// Configuration version (incremented on each reload)
+    #[serde(skip)]
+    pub version: u64,
+    /// Timestamp when this configuration was loaded
+    #[serde(skip)]
+    pub loaded_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Config {
     /// Load configuration from a YAML file
     pub fn load_from_file(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let config = serde_yaml::from_str(&content)?;
+        let mut config: Self = serde_yaml::from_str(&content)?;
+        config.version = 1;
+        config.loaded_at = Utc::now();
+        Ok(config)
+    }
+
+    /// Validate configuration
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate server port (u16 is already 0-65535)
+        if self.server.port == 0 {
+            return Err("Server port cannot be 0. Must be between 1 and 65535".to_string());
+        }
+
+        // Validate server host
+        if self.server.host.is_empty() {
+            return Err("Server host cannot be empty".to_string());
+        }
+
+        // Validate routes is not empty
+        if self.routes.is_empty() {
+            return Err("Routes list cannot be empty".to_string());
+        }
+
+        // Check for duplicate model names and validate each route
+        let mut seen_models = HashSet::new();
+        for route in &self.routes {
+            if route.model_name.is_empty() {
+                return Err("Route model_name cannot be empty".to_string());
+            }
+            if !seen_models.insert(&route.model_name) {
+                return Err(format!("Duplicate model name: {}", route.model_name));
+            }
+            if route.api_key.is_empty() {
+                return Err(format!("API key for model '{}' cannot be empty", route.model_name));
+            }
+            if let Some(upstream) = &route.upstream_model {
+                if upstream.is_empty() {
+                    return Err(format!("Upstream model for '{}' cannot be empty (remove the field if not used)", route.model_name));
+                }
+            }
+        }
+
+        // Validate logging level
+        let valid_levels = ["trace", "debug", "info", "warn", "error"];
+        if !valid_levels.contains(&self.logging.level.to_lowercase().as_str()) {
+            return Err(format!(
+                "Invalid log level: {}. Valid levels are: {}",
+                self.logging.level,
+                valid_levels.join(", ")
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Load configuration from a YAML file and validate it
+    pub fn load_and_validate(path: &str) -> Result<Self, String> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+        let mut config: Self = serde_yaml::from_str(&content)
+            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+        config.validate()?;
+        config.version = 1;
+        config.loaded_at = Utc::now();
         Ok(config)
     }
 

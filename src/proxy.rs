@@ -1,5 +1,6 @@
 //! Core proxy implementation - handles request routing, conversion, and streaming
 
+use arc_swap::ArcSwap;
 use axum::{
     body::{Bytes, Body},
     extract::State,
@@ -27,12 +28,14 @@ use crate::stats::TokenStats;
 /// Shared proxy state that is held by the Axum server
 #[derive(Clone)]
 pub struct ProxyState {
-    /// Application configuration
-    pub config: Config,
+    /// Application configuration - atomically updatable
+    pub config: Arc<ArcSwap<Config>>,
+    /// Path to configuration file for reloading
+    pub config_path: String,
     /// reqwest HTTP client for backend requests
     pub client: reqwest::Client,
-    /// Optional statistics writer for token usage logging
-    pub stats_writer: Option<StatsWriter>,
+    /// Optional statistics writer for token usage logging - atomically updatable
+    pub stats_writer: Arc<ArcSwap<Option<StatsWriter>>>,
 }
 
 // =============================================================================
@@ -236,7 +239,8 @@ async fn handle_non_streaming(
     let duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Write statistics if enabled
-    if let Some(stats_writer) = &state.stats_writer {
+    let stats_writer = state.stats_writer.load();
+    if let Some(stats_writer) = stats_writer.as_ref() {
         let stats = TokenStats {
             timestamp: Utc::now(),
             model: model.clone(),
@@ -369,7 +373,7 @@ async fn handle_streaming(
 
     let provider_type = route.provider_type;
     let model_clone = model.clone();
-    let stats_writer = state.stats_writer.clone();
+    let stats_writer_snapshot = state.stats_writer.load();
     let token_counter_clone = token_counter.clone();
 
     // Transform the stream: parse each chunk, convert to OpenAI format, count tokens
@@ -569,7 +573,6 @@ async fn handle_streaming(
     // After stream completes, write statistics
     // Pin the transformed stream so we can safely poll it
     let pinned_transformed = Box::pin(transformed_stream);
-    let stats_writer_clone = stats_writer;
     let model_clone = model.clone();
     let provider_type_clone = provider_type;
     let token_counter_clone = token_counter.clone();
@@ -577,7 +580,7 @@ async fn handle_streaming(
     let final_stream = futures_util::stream::unfold(
         (
             pinned_transformed,
-            stats_writer_clone,
+            stats_writer_snapshot,
             model_clone,
             provider_type_clone,
             prompt_tokens,
@@ -610,7 +613,7 @@ async fn handle_streaming(
                         "Completed streaming request"
                     );
 
-                    if let Some(ref stats_writer) = stats_writer {
+                    if let Some(stats_writer) = stats_writer.as_ref() {
                         let stats = TokenStats {
                             timestamp: Utc::now(),
                             model: model.clone(),
@@ -684,8 +687,9 @@ pub async fn proxy_handler(
     };
 
     // Find backend route for requested model
+    let config = state.config.load();
     let model = req.model.clone();
-    let Some(route) = state.config.find_backend_for_model(&model) else {
+    let Some(route) = config.find_backend_for_model(&model) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": format!("No backend route configured for model: {}", model) }))
@@ -719,6 +723,88 @@ pub async fn proxy_handler(
     }
 }
 
+/// Build upstream models URL from route config
+fn build_models_url(route: &RouteConfig) -> Option<String> {
+    match route.provider_type {
+        ProviderType::OpenAi => {
+            route.base_url
+                .as_ref()
+                .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/')))
+        }
+        ProviderType::OpenAiCompatible => {
+            // Try to extract base_url from the full chat completions URL
+            route.url.as_ref().and_then(|url| {
+                url.find("/v1/chat/completions")
+                    .map(|idx| format!("{}/v1/models", &url[..idx]))
+                    .or_else(|| route.base_url
+                        .as_ref()
+                        .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/')))
+                    )
+            })
+        }
+        ProviderType::Ollama | ProviderType::Anthropic | ProviderType::Gemini => None,
+    }
+}
+
+/// Fetch model information from upstream provider
+async fn fetch_upstream_model_info(
+    client: &reqwest::Client,
+    route: &RouteConfig,
+    created: u64,
+) -> OpenAIModel {
+    // Try to fetch from upstream if supported
+    if let Some(models_url) = build_models_url(route) {
+        match client
+            .get(&models_url)
+            .header("Authorization", format!("Bearer {}", route.api_key))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(upstream_response) = resp.json::<OpenAIModelsListResponse>().await {
+                    // Find matching model in upstream response
+                    let upstream_model_name = route.upstream_model();
+                    if let Some(upstream_model) = upstream_response.data
+                        .iter()
+                        .find(|m| m.id == upstream_model_name || m.id == route.model_name)
+                    {
+                        return OpenAIModel {
+                            id: route.model_name.clone(),
+                            object: "model".to_string(),
+                            created: upstream_model.created,
+                            owned_by: upstream_model.owned_by.clone(),
+                            root: upstream_model.root.clone(),
+                            parent: upstream_model.parent.clone(),
+                            max_model_len: upstream_model.max_model_len,
+                        };
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Fallback: return basic model info with defaults
+    let owned_by = match route.provider_type {
+        ProviderType::OpenAi => "openai",
+        ProviderType::Anthropic => "anthropic",
+        ProviderType::Ollama => "ollama",
+        ProviderType::Gemini => "google",
+        ProviderType::OpenAiCompatible => "sglang",
+    };
+
+    OpenAIModel {
+        id: route.model_name.clone(),
+        object: "model".to_string(),
+        created,
+        owned_by: owned_by.to_string(),
+        root: Some(route.upstream_model().to_string()),
+        parent: None,
+        max_model_len: None,
+    }
+}
+
 /// Axum handler for GET /v1/models - returns list of all enabled models
 pub async fn models_handler(
     State(state): State<Arc<ProxyState>>,
@@ -728,21 +814,134 @@ pub async fn models_handler(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let data: Vec<OpenAIModel> = state.config.routes
-        .iter()
-        .filter(|route| route.enabled)
-        .map(|route| OpenAIModel {
-            id: route.model_name.clone(),
-            object: "model".to_string(),
-            created,
-            owned_by: "lumina".to_string(),
-        })
-        .collect();
+    let config = state.config.load();
+    let mut data = Vec::new();
+    for route in config.routes.iter().filter(|route| route.enabled) {
+        let model_info = fetch_upstream_model_info(&state.client, route, created).await;
+        data.push(model_info);
+    }
 
     let response = OpenAIModelsListResponse {
         object: "list".to_string(),
         data,
     };
+
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+// =============================================================================
+// Admin API Handlers
+// =============================================================================
+
+/// Handler for POST /v1/admin/reload-config
+pub async fn reload_config_handler(
+    State(state): State<Arc<ProxyState>>,
+) -> impl IntoResponse {
+    // Load and validate new configuration
+    let new_config = match Config::load_and_validate(&state.config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::error!("Failed to reload configuration: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to reload configuration: {}", e)
+                }))
+            ).into_response();
+        }
+    };
+
+    // Get current config to compare fields
+    let current_config = state.config.load();
+
+    // Check if stats enabled status changed and rebuild StatsWriter if needed
+    if new_config.statistics.enabled != current_config.statistics.enabled {
+        if new_config.statistics.enabled {
+            // Enable statistics
+            match StatsWriter::new(&new_config.statistics).await {
+                Ok(new_stats_writer) => {
+                    state.stats_writer.store(Arc::new(Some(new_stats_writer)));
+                    tracing::info!("Statistics enabled during config reload");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize statistics writer: {}", e);
+                }
+            }
+        } else {
+            // Disable statistics
+            state.stats_writer.store(Arc::new(None));
+            tracing::info!("Statistics disabled during config reload");
+        }
+    }
+
+    // Collect warnings about fields that require restart
+    let mut warnings = Vec::new();
+    if new_config.server.port != current_config.server.port {
+        warnings.push("Server port change requires server restart to take effect".to_string());
+    }
+    if new_config.server.host != current_config.server.host {
+        warnings.push("Server host change requires server restart to take effect".to_string());
+    }
+    if new_config.logging != current_config.logging {
+        warnings.push("Logging configuration changes require server restart to take effect".to_string());
+    }
+    if new_config.statistics.file_path != current_config.statistics.file_path
+        || new_config.statistics.buffer_seconds != current_config.statistics.buffer_seconds
+    {
+        warnings.push("Statistics file/buffer configuration changes require server restart to take effect".to_string());
+    }
+
+    // Update the configuration atomically
+    state.config.store(Arc::new(new_config));
+    tracing::info!("Configuration reloaded successfully");
+
+    // Return success response with warnings
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "message": "Configuration reloaded successfully",
+            "warnings": warnings
+        }))
+    ).into_response()
+}
+
+/// Handler for GET /v1/admin/config - returns current configuration (sensitive fields masked)
+pub async fn get_config_handler(
+    State(state): State<Arc<ProxyState>>,
+) -> impl IntoResponse {
+    let config = state.config.load();
+
+    // Build routes with provider_type only (no api keys exposed)
+    let routes: Vec<_> = config.routes.iter().map(|route| {
+        json!({
+            "model_name": route.model_name,
+            "provider_type": format!("{:?}", route.provider_type).to_lowercase(),
+            "enabled": route.enabled
+        })
+    }).collect();
+
+    let response = json!({
+        "server": {
+            "host": config.server.host,
+            "port": config.server.port,
+            "auth_enabled": config.server.auth_token.is_some()
+        },
+        "logging": {
+            "level": config.logging.level,
+            "console_enabled": config.logging.console,
+            "file_enabled": config.logging.file.as_ref().map(|f| f.enabled).unwrap_or(false)
+        },
+        "statistics": {
+            "enabled": config.statistics.enabled
+        },
+        "routes": routes,
+        "metadata": {
+            "version": config.version,
+            "loaded_at": config.loaded_at.to_rfc3339()
+        }
+    });
 
     (StatusCode::OK, Json(response)).into_response()
 }

@@ -5,16 +5,18 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use crate::config::Config;
+use std::sync::Arc;
+use crate::proxy::ProxyState;
 
 /// Authentication middleware that validates Bearer tokens
 /// If no auth token is configured in the config, all requests are allowed
 pub async fn auth_middleware(
-    State(config): State<Config>,
+    State(state): State<Arc<ProxyState>>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
     // If no auth token is configured, allow all requests
+    let config = state.config.load();
     let Some(expected_token) = &config.server.auth_token else {
         return Ok(next.run(req).await);
     };
