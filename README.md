@@ -1,6 +1,7 @@
 # Lumina-Proxy
 
-[![Build](https://github.com/your-username/lumina-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/your-username/lumina-proxy/actions/workflows/build.yml)
+[![Build](https://github.com/dovics/lumina-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/dovics/lumina-proxy/actions/workflows/build.yml)
+[![Release](https://github.com/dovics/lumina-proxy/actions/workflows/release.yml/badge.svg)](https://github.com/dovics/lumina-proxy/actions/workflows/release.yml)
 
 A high-performance LLM routing proxy supporting multiple backend providers with hot config reload and Windows system tray integration.
 
@@ -29,12 +30,23 @@ A high-performance LLM routing proxy supporting multiple backend providers with 
 
 ### Download Pre-built Binaries
 
-You can download pre-built binaries from the [Releases](https://github.com/your-username/lumina-proxy/releases) page:
+You can download pre-built binaries from the [Releases](https://github.com/dovics/lumina-proxy/releases) page:
 
-- **Windows**: `lumina-windows-x86_64.zip` (with system tray support)
+- **Windows**: `lumina-windows-x86_64.tar.gz` (with system tray support)
 - **Linux**: `lumina-linux-x86_64.tar.gz`
 - **macOS (Intel)**: `lumina-macos-x86_64.tar.gz`
 - **macOS (Apple Silicon)**: `lumina-macos-aarch64.tar.gz`
+
+### Creating a Release
+
+To create a new release, simply push a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions will automatically build all platforms and create a release with the artifacts.
 
 ### Build from Source
 
