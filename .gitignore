@@ -8,3 +8,5 @@ config.local.yaml
 docs/superpowers
 
 *.local
+
+docs
