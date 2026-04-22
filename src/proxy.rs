@@ -500,34 +500,30 @@ async fn handle_streaming(
                                     // Count tokens from all choices
                                     for choice in &openai_chunk.choices {
                                         // Count content tokens
-                                        if let Some(content) = &choice.delta.content {
-                                            if !content.is_empty() {
-                                                counter.add_delta(content);
-                                                has_content = true;
-                                            }
+                                        if let Some(content) = &choice.delta.content
+                                            && !content.is_empty() {
+                                            counter.add_delta(content);
+                                            has_content = true;
                                         }
                                         // Also count reasoning tokens (for Kimi/OpenRouter deepseek reasoning)
-                                        if let Some(reasoning) = &choice.delta.reasoning {
-                                            if !reasoning.is_empty() {
-                                                counter.add_delta(reasoning);
-                                                has_content = true;
-                                            }
+                                        if let Some(reasoning) = &choice.delta.reasoning
+                                            && !reasoning.is_empty() {
+                                            counter.add_delta(reasoning);
+                                            has_content = true;
                                         }
                                         // Also count tool call tokens (function name and arguments)
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             for tool_call in tool_calls {
                                                 if let Some(function) = &tool_call.function {
-                                                    if let Some(name) = &function.name {
-                                                        if !name.is_empty() {
-                                                            counter.add_delta(name);
-                                                            has_content = true;
-                                                        }
+                                                    if let Some(name) = &function.name
+                                                        && !name.is_empty() {
+                                                        counter.add_delta(name);
+                                                        has_content = true;
                                                     }
-                                                    if let Some(arguments) = &function.arguments {
-                                                        if !arguments.is_empty() {
-                                                            counter.add_delta(arguments);
-                                                            has_content = true;
-                                                        }
+                                                    if let Some(arguments) = &function.arguments
+                                                        && !arguments.is_empty() {
+                                                        counter.add_delta(arguments);
+                                                        has_content = true;
                                                     }
                                                 }
                                             }

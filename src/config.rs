@@ -185,10 +185,9 @@ impl Config {
             if route.api_key.is_empty() {
                 return Err(format!("API key for model '{}' cannot be empty", route.model_name));
             }
-            if let Some(upstream) = &route.upstream_model {
-                if upstream.is_empty() {
-                    return Err(format!("Upstream model for '{}' cannot be empty (remove the field if not used)", route.model_name));
-                }
+            if let Some(upstream) = &route.upstream_model
+                && upstream.is_empty() {
+                return Err(format!("Upstream model for '{}' cannot be empty (remove the field if not used)", route.model_name));
             }
         }
 

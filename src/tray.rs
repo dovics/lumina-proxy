@@ -229,8 +229,7 @@ impl TrayManager {
             Err(_) => {
                 tracing::warn!("Failed to load embedded icon, using fallback");
                 let pixel: [u8; 4] = [0, 120, 215, 255];
-                let rgba_data = std::iter::repeat(&pixel)
-                    .take((SIZE * SIZE) as usize)
+                let rgba_data = std::iter::repeat_n(&pixel, (SIZE * SIZE) as usize)
                     .flat_map(|p| p.iter().copied())
                     .collect::<Vec<u8>>();
                 Icon::from_rgba(rgba_data, SIZE, SIZE)
@@ -245,7 +244,7 @@ impl TrayManager {
         let path = Path::new(path);
         if path.exists() {
             let result = std::process::Command::new("cmd")
-                .args(&["/C", "start", "", path.to_str().unwrap_or_default()])
+                .args(["/C", "start", "", path.to_str().unwrap_or_default()])
                 .spawn();
             if let Err(e) = result {
                 tracing::error!("Failed to open config file: {}", e);
