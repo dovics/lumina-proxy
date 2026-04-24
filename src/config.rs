@@ -90,10 +90,10 @@ pub struct ServerConfig {
 pub struct StatisticsConfig {
     /// Whether statistics collection is enabled
     pub enabled: bool,
-    /// Path to the statistics file (JSONL format)
-    pub file_path: Option<String>,
-    /// Buffer duration in seconds before writing to disk
-    pub buffer_seconds: Option<f64>,
+    /// Path to aggregated stats file (JSONL format)
+    pub stats_file: Option<String>,
+    /// Aggregation interval in seconds (default: 60)
+    pub aggregation_interval_secs: Option<u64>,
 }
 
 /// Route configuration for a model to backend provider

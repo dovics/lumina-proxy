@@ -1106,10 +1106,10 @@ pub async fn reload_config_handler(
     if new_config.logging != current_config.logging {
         warnings.push("Logging configuration changes require server restart to take effect".to_string());
     }
-    if new_config.statistics.file_path != current_config.statistics.file_path
-        || new_config.statistics.buffer_seconds != current_config.statistics.buffer_seconds
+    if new_config.statistics.stats_file != current_config.statistics.stats_file
+        || new_config.statistics.aggregation_interval_secs != current_config.statistics.aggregation_interval_secs
     {
-        warnings.push("Statistics file/buffer configuration changes require server restart to take effect".to_string());
+        warnings.push("Statistics config changes require server restart to take effect.");
     }
     if new_config.server.proxy != current_config.server.proxy {
         warnings.push("Proxy configuration changes require server restart to take effect".to_string());
