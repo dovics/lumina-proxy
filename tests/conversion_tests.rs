@@ -17,7 +17,7 @@ use lumina::types::{
 fn openai_message(role: &str, content: &str) -> OpenAIMessage {
     OpenAIMessage {
         role: role.to_string(),
-        content: content.to_string(),
+        content: Some(content.to_string()),
     }
 }
 
@@ -69,7 +69,7 @@ fn test_ollama_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content, "Hello! How can I help you today?");
+    assert_eq!(message.content.as_deref(), Some("Hello! How can I help you today?"));
     assert_eq!(openai_resp.usage.prompt_tokens, 5);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 25);
@@ -177,7 +177,7 @@ fn test_anthropic_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content, "Hello! How can I help you today?");
+    assert_eq!(message.content.as_deref(), Some("Hello! How can I help you today?"));
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 30);
@@ -268,7 +268,7 @@ fn test_gemini_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content, "Why did the chicken cross the road? To get to the other side!");
+    assert_eq!(message.content.as_deref(), Some("Why did the chicken cross the road? To get to the other side!"));
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 30);

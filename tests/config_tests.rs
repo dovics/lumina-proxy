@@ -39,7 +39,7 @@ routes:
     assert_eq!(route.model_name, "llama3:8b");
     assert!(matches!(route.provider_type, ProviderType::Ollama));
     assert_eq!(route.base_url, Some("http://localhost:11434".to_string()));
-    assert_eq!(route.api_key, "ollama");
+    assert_eq!(route.api_key, Some("ollama".to_string()));
     assert!(route.enabled);
 }
 
@@ -146,6 +146,33 @@ routes:
     // Not found - non-existent model
     let found = config.find_backend_for_model("non-existent");
     assert!(found.is_none());
+}
+
+#[test]
+fn test_route_without_api_key() {
+    let yaml = r#"
+server:
+  port: 8080
+  host: "0.0.0.0"
+
+logging:
+  level: "info"
+  console: true
+
+statistics:
+  enabled: false
+
+routes:
+  - model_name: "llama3:8b"
+    provider_type: "ollama"
+    base_url: "http://localhost:11434"
+    enabled: true
+"#;
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(config.routes.len(), 1);
+    let route = &config.routes[0];
+    assert_eq!(route.model_name, "llama3:8b");
+    assert!(route.api_key.is_none());
 }
 
 #[test]

@@ -111,8 +111,9 @@ pub struct RouteConfig {
     pub base_url: Option<String>,
     /// Full URL for the API (alternative to base_url)
     pub url: Option<String>,
-    /// API key for authentication
-    pub api_key: String,
+    /// API key for authentication (optional for local providers like Ollama)
+    #[serde(default)]
+    pub api_key: Option<String>,
     /// Whether this route is enabled
     pub enabled: bool,
 }
@@ -181,9 +182,6 @@ impl Config {
             }
             if !seen_models.insert(&route.model_name) {
                 return Err(format!("Duplicate model name: {}", route.model_name));
-            }
-            if route.api_key.is_empty() {
-                return Err(format!("API key for model '{}' cannot be empty", route.model_name));
             }
             if let Some(upstream) = &route.upstream_model
                 && upstream.is_empty() {

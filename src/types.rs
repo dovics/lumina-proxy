@@ -32,7 +32,8 @@ pub struct OpenAIChatRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIMessage {
     pub role: String,
-    pub content: String,
+    #[serde(default)]
+    pub content: Option<String>,
 }
 
 /// OpenAI chat completion response (standard format for all outgoing responses)

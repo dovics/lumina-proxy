@@ -12,7 +12,7 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
     let messages = req.messages.iter()
         .map(|m| OllamaMessage {
             role: m.role.clone(),
-            content: m.content.clone(),
+            content: m.content.clone().unwrap_or_default(),
         })
         .collect();
 
@@ -43,7 +43,7 @@ pub fn convert_ollama_to_openai(
             index: 0,
             message: Some(OpenAIMessage {
                 role: resp.message.role.clone(),
-                content: resp.message.content.clone(),
+                content: Some(resp.message.content.clone()),
             }),
             delta: None,
             finish_reason: if resp.done {
@@ -106,11 +106,11 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     // Extract system message to top-level system field as required by Anthropic API
     for msg in &req.messages {
         if msg.role == "system" && system.is_none() {
-            system = Some(msg.content.clone());
+            system = Some(msg.content.clone().unwrap_or_default());
         } else {
             messages.push(AnthropicMessage {
                 role: msg.role.clone(),
-                content: msg.content.clone(),
+                content: msg.content.clone().unwrap_or_default(),
             });
         }
     }
@@ -158,7 +158,7 @@ pub fn convert_anthropic_to_openai(
             index: 0,
             message: Some(OpenAIMessage {
                 role: "assistant".to_string(),
-                content,
+                content: Some(content),
             }),
             delta: None,
             finish_reason,
@@ -221,7 +221,7 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
             // Gemini uses "model" instead of "assistant"
             role: if m.role == "assistant" { "model".to_string() } else { m.role.clone() },
             parts: vec![GeminiPart {
-                text: Some(m.content.clone()),
+                text: m.content.clone(),
             }],
         })
         .collect();
@@ -273,7 +273,7 @@ pub fn convert_gemini_to_openai(
                 index: idx as u32,
                 message: Some(OpenAIMessage {
                     role: "assistant".to_string(),
-                    content,
+                    content: Some(content),
                 }),
                 delta: None,
                 finish_reason,

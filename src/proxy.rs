@@ -123,8 +123,10 @@ async fn handle_non_streaming(
     // Build the request based on provider type
     let mut request_builder = state.client.post(backend_url);
 
-    // Add authorization
-    request_builder = request_builder.header("Authorization", format!("Bearer {}", route.api_key));
+    // Add authorization header if api_key is provided
+    if let Some(api_key) = &route.api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
     // Set content type to JSON since we're sending JSON body
     request_builder = request_builder.header("Content-Type", "application/json");
 
@@ -222,12 +224,29 @@ async fn handle_non_streaming(
         }
 
         ProviderType::OpenAi | ProviderType::OpenAiCompatible => {
-            let mut openai_resp: OpenAIChatResponse = response.json()
-                .await
-                .map_err(|e| (
-                    StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) }))
-                ))?;
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+
+            tracing::debug!(
+                status = %status,
+                provider = ?route.provider_type,
+                body_len = %body_text.len(),
+                "Received upstream response body"
+            );
+
+            let mut openai_resp: OpenAIChatResponse = serde_json::from_str(&body_text)
+                .map_err(|e| {
+                    tracing::warn!(
+                        status = %status,
+                        provider = ?route.provider_type,
+                        body_preview = %body_text.chars().take(500).collect::<String>(),
+                        "Failed to parse OpenAI response: {}", e
+                    );
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) }))
+                    )
+                })?;
             let tokens = openai_resp.usage.completion_tokens as usize;
             // Override model name to client-requested name for response
             openai_resp.model = model.clone();
@@ -265,6 +284,35 @@ async fn handle_non_streaming(
         total_tokens = %total_tokens,
         duration_ms = %duration_ms,
         "Completed non-streaming request"
+    );
+
+    // Check for abnormal responses and warn
+    for choice in &openai_resp.choices {
+        if let Some(reason) = &choice.finish_reason {
+            if reason == "length" {
+                tracing::warn!(
+                    model = %openai_resp.model,
+                    finish_reason = %reason,
+                    "Response was truncated due to token limit (max_tokens or model limit)"
+                );
+            }
+        }
+        if let Some(msg) = &choice.message {
+            if msg.content.is_none() || msg.content.as_ref().map(|c| c.is_empty()).unwrap_or(false) {
+                tracing::warn!(
+                    model = %openai_resp.model,
+                    finish_reason = %choice.finish_reason.clone().unwrap_or_default(),
+                    "Response has no content"
+                );
+            }
+        }
+    }
+
+    // Trace log the response
+    tracing::trace!(
+        model = %openai_resp.model,
+        response_body = %serde_json::to_string(&openai_resp).unwrap_or_default(),
+        "Non-streaming response"
     );
 
     Ok(openai_resp)
@@ -325,7 +373,9 @@ async fn handle_streaming(
 
     // Build and send the request
     let mut request_builder = state.client.post(backend_url.clone());
-    request_builder = request_builder.header("Authorization", format!("Bearer {}", route.api_key));
+    if let Some(api_key) = &route.api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+    }
     // Set content type to JSON since we're sending JSON body
     request_builder = request_builder.header("Content-Type", "application/json");
 
@@ -559,6 +609,17 @@ async fn handle_streaming(
 
                     match openai_chunk_result {
                         Ok(chunk) => {
+                            // Trace log each streaming chunk
+                            let first_delta = chunk.choices.first()
+                                .and_then(|c| c.delta.content.clone())
+                                .unwrap_or_default();
+                            tracing::trace!(
+                                chunk_id = %chunk.id,
+                                chunk_model = %chunk.model,
+                                first_delta = %first_delta,
+                                "Streaming chunk"
+                            );
+
                             // Format as SSE
                             let sse_line = format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
                             yielded_chunks.push(Ok(Bytes::from(sse_line)));
@@ -834,6 +895,15 @@ pub async fn proxy_handler(
         }
     };
 
+    // Trace log the incoming request
+    tracing::trace!(
+        model = %req.model,
+        stream = ?req.stream,
+        messages_count = %req.messages.len(),
+        request_body = %String::from_utf8_lossy(&bytes),
+        "Incoming request"
+    );
+
     // Find backend route for requested model
     let config = state.config.load();
     let model = req.model.clone();
@@ -902,9 +972,11 @@ async fn fetch_upstream_model_info(
 ) -> OpenAIModel {
     // Try to fetch from upstream if supported
     if let Some(models_url) = build_models_url(route) {
-        match client
-            .get(&models_url)
-            .header("Authorization", format!("Bearer {}", route.api_key))
+        let mut request = client.get(&models_url);
+        if let Some(api_key) = &route.api_key {
+            request = request.header("Authorization", format!("Bearer {}", api_key));
+        }
+        match request
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await

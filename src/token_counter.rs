@@ -22,7 +22,8 @@ pub fn count_prompt_tokens(req: &OpenAIChatRequest) -> usize {
 
     // Count tokens from each message's content
     for message in &req.messages {
-        let tokens = tokenizer.encode_with_special_tokens(&message.content);
+        let content = message.content.as_deref().unwrap_or("");
+        let tokens = tokenizer.encode_with_special_tokens(content);
         total_tokens += tokens.len();
     }
 
@@ -67,7 +68,7 @@ mod tests {
     fn openai_message(role: &str, content: &str) -> OpenAIMessage {
         OpenAIMessage {
             role: role.to_string(),
-            content: content.to_string(),
+            content: Some(content.to_string()),
         }
     }
 
