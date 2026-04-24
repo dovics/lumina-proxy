@@ -52,7 +52,6 @@ pub struct StatsWriter {
     flush_interval: Duration,
     last_flush: Arc<Mutex<Instant>>,
     stats_file: Option<String>,
-    writer: Arc<Mutex<Option<BufWriter<tokio::fs::File>>>>,
     enabled: bool,
 }
 
@@ -64,7 +63,6 @@ impl StatsWriter {
                 flush_interval: Duration::from_secs(60),
                 last_flush: Arc::new(Mutex::new(Instant::now())),
                 stats_file: None,
-                writer: Arc::new(Mutex::new(None)),
                 enabled: false,
             });
         }
@@ -72,14 +70,6 @@ impl StatsWriter {
         let stats_file = config.stats_file.as_ref()
             .ok_or_else(|| ProxyError::ConfigError("Statistics enabled but stats_file not provided".to_string()))?;
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(stats_file)
-            .await
-            .map_err(|e| ProxyError::ConfigError(format!("Failed to open stats file: {}", e)))?;
-
-        let buf_writer = BufWriter::new(file);
         let interval_secs = config.aggregation_interval_secs.unwrap_or(60);
 
         Ok(Self {
@@ -87,7 +77,6 @@ impl StatsWriter {
             flush_interval: Duration::from_secs(interval_secs),
             last_flush: Arc::new(Mutex::new(Instant::now())),
             stats_file: Some(stats_file.clone()),
-            writer: Arc::new(Mutex::new(Some(buf_writer))),
             enabled: true,
         })
     }
