@@ -12,14 +12,13 @@ use axum::response::Json as AxumJson;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
-use chrono::Utc;
-
 use crate::config::{Config, ProviderType, RouteConfig};
 use crate::types::*;
 use crate::convert::*;
 use crate::token_counter::*;
-use crate::stats::StatsWriter;
-use crate::stats::TokenStats;
+use crate::stats::{StatsWriter, RequestMetrics};
+use tokio::sync::Mutex;
+use tokio::time::Instant;
 
 // =============================================================================
 // Proxy State - Shared application state
@@ -260,18 +259,17 @@ async fn handle_non_streaming(
     // Write statistics if enabled
     let stats_writer = state.stats_writer.load();
     if let Some(stats_writer) = stats_writer.as_ref() {
-        let stats = TokenStats {
-            timestamp: Utc::now(),
+        let metric = RequestMetrics {
             model: model.clone(),
             provider: format!("{:?}", route.provider_type).to_lowercase(),
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
+            prompt_tokens: prompt_tokens as u64,
+            completion_tokens: completion_tokens as u64,
             duration_ms,
+            ttft_ms: None,
+            tpot_ms: None,
             status: "success".to_string(),
-            error_message: None,
         };
-        if let Err(e) = stats_writer.write_stat(stats).await {
+        if let Err(e) = stats_writer.write_metric(metric).await {
             tracing::warn!("Failed to write statistics: {}", e);
         }
     }
@@ -331,6 +329,7 @@ async fn handle_streaming(
 ) -> Result<Response<Body>, (StatusCode, Json<serde_json::Value>)> {
     let model = req.model.clone();
     let start_time = std::time::Instant::now();
+    let first_bytes_time = Arc::new(Mutex::new(None::<Instant>));
 
     // Convert request body based on provider - use upstream_model for outgoing request
     let mut streaming_req = req.clone();
@@ -437,11 +436,12 @@ async fn handle_streaming(
         created,
         model_clone,
         String::new(),
+        first_bytes_time.clone(),
     );
 
     let transformed_stream = futures_util::stream::unfold(
         initial_state,
-        move |(mut bytes_stream, counter, id, created, model, mut buffer)| async move {
+        move |(mut bytes_stream, counter, id, created, model, mut buffer, first_bytes_time)| async move {
             let provider_type = provider_type;
 
             // Continuously read and process until we have at least one chunk to yield,
@@ -653,7 +653,7 @@ async fn handle_streaming(
                         let s = String::from_utf8_lossy(bytes.as_ref());
                         buffer = s.to_string() + &buffer;
                     }
-                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer)));
+                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer, first_bytes_time)));
                 }
 
                 // No chunks ready yet - need to read more data from backend
@@ -669,10 +669,18 @@ async fn handle_streaming(
                                 )));
                                 return Some((
                                     error_chunk,
-                                    (bytes_stream, counter, id, created, model, buffer)
+                                    (bytes_stream, counter, id, created, model, buffer, first_bytes_time)
                                 ));
                             }
                         };
+
+                        // Record TTFT clock: first bytes received from upstream
+                        {
+                            let mut first_time = first_bytes_time.lock().await;
+                            if first_time.is_none() {
+                                *first_time = Some(Instant::now());
+                            }
+                        }
 
                         // Convert bytes to string and append to buffer
                         match String::from_utf8(bytes.to_vec()) {
@@ -720,10 +728,11 @@ async fn handle_streaming(
             prompt_tokens,
             start_time,
             token_counter_clone,
+            first_bytes_time,
             false,
             0 // chunk counter - detect if we got any valid chunks
         ),
-        |(mut stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, done, chunk_count)| async move {
+        |(mut stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, done, chunk_count)| async move {
             if done {
                 return None;
             }
@@ -733,7 +742,7 @@ async fn handle_streaming(
             match stream.next().await {
                 Some(item) => {
                     // Got a valid chunk, increment counter
-                    Some((item, (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, false, chunk_count + 1)))
+                    Some((item, (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, false, chunk_count + 1)))
                 },
                 None => {
                     // Stream is complete, check if we got any valid chunks
@@ -788,18 +797,17 @@ async fn handle_streaming(
 
                         // Write stats with error status
                         if let Some(stats_writer) = stats_writer.as_ref() {
-                            let stats = TokenStats {
-                                timestamp: Utc::now(),
+                            let metric = RequestMetrics {
                                 model: model.clone(),
                                 provider: format!("{:?}", provider_type).to_lowercase(),
-                                prompt_tokens,
-                                completion_tokens,
-                                total_tokens,
+                                prompt_tokens: prompt_tokens as u64,
+                                completion_tokens: completion_tokens as u64,
                                 duration_ms,
+                                ttft_ms: None,
+                                tpot_ms: None,
                                 status: "error".to_string(),
-                                error_message: Some("Model returned no response chunks".to_string()),
                             };
-                            if let Err(e) = stats_writer.write_stat(stats).await {
+                            if let Err(e) = stats_writer.write_metric(metric).await {
                                 tracing::warn!("Failed to write statistics: {}", e);
                             }
                         }
@@ -807,7 +815,7 @@ async fn handle_streaming(
                         // Send error chunk first, then [DONE]
                         return Some((
                             Ok(Bytes::from(error_sse)),
-                            (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, true, chunk_count)
+                            (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, true, chunk_count)
                         ));
                     }
 
@@ -822,19 +830,28 @@ async fn handle_streaming(
                         "Completed streaming request"
                     );
 
+                    // Calculate TTFT and TPOT
+                    let first_bytes_guard = first_bytes_time.lock().await;
+                    let ttft_ms = first_bytes_guard.map(|t| t.elapsed().as_millis() as u64);
+                    let tpot_ms = if completion_tokens > 0 {
+                        Some(duration_ms as f64 / completion_tokens as f64)
+                    } else {
+                        None
+                    };
+                    drop(first_bytes_guard);
+
                     if let Some(stats_writer) = stats_writer.as_ref() {
-                        let stats = TokenStats {
-                            timestamp: Utc::now(),
+                        let metric = RequestMetrics {
                             model: model.clone(),
                             provider: format!("{:?}", provider_type).to_lowercase(),
-                            prompt_tokens,
-                            completion_tokens,
-                            total_tokens,
+                            prompt_tokens: prompt_tokens as u64,
+                            completion_tokens: completion_tokens as u64,
                             duration_ms,
+                            ttft_ms,
+                            tpot_ms,
                             status: "success".to_string(),
-                            error_message: None,
                         };
-                        if let Err(e) = stats_writer.write_stat(stats).await {
+                        if let Err(e) = stats_writer.write_metric(metric).await {
                             tracing::warn!("Failed to write statistics: {}", e);
                         }
                     }
@@ -842,7 +859,7 @@ async fn handle_streaming(
                     // Send final [DONE]
                     Some((
                         Ok(Bytes::from("data: [DONE]\n\n")),
-                        (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, true, chunk_count)
+                        (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, true, chunk_count)
                     ))
                 }
             }
@@ -1109,7 +1126,7 @@ pub async fn reload_config_handler(
     if new_config.statistics.stats_file != current_config.statistics.stats_file
         || new_config.statistics.aggregation_interval_secs != current_config.statistics.aggregation_interval_secs
     {
-        warnings.push("Statistics config changes require server restart to take effect.");
+        warnings.push("Statistics config changes require server restart to take effect.".to_string());
     }
     if new_config.server.proxy != current_config.server.proxy {
         warnings.push("Proxy configuration changes require server restart to take effect".to_string());

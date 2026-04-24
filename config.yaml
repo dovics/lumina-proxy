@@ -22,11 +22,11 @@ logging:
     max_size_mb: 100       # 按大小轮转时的最大大小
     max_files: 5           # 保留最多多少个轮转文件
 
-# Token 统计持久化配置
+# 统计持久化配置
 statistics:
   enabled: true
-  file_path: "./token_stats.jsonl"  # JSONL 文件路径
-  buffer_seconds: 1.0              # 缓冲写入多少秒后刷盘，减少 IO
+  stats_file: "./stats.jsonl"      # 聚合统计文件路径
+  aggregation_interval_secs: 60   # 聚合间隔（秒）
 
 # 路由配置
 routes:
