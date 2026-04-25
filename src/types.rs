@@ -26,6 +26,10 @@ pub struct OpenAIChatRequest {
     pub presence_penalty: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAITool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<OpenAIToolChoice>,
 }
 
 /// A single message in an OpenAI chat conversation
@@ -34,6 +38,14 @@ pub struct OpenAIMessage {
     pub role: String,
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OpenAIToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_call: Option<OpenAIFunctionCall>, // legacy format
+    #[serde(skip_serializing_if = "Option::is_none", rename = "tool_call_id")]
+    pub tool_call_id: Option<String>,
 }
 
 /// OpenAI chat completion response (standard format for all outgoing responses)
@@ -86,6 +98,50 @@ pub struct OpenAIToolCall {
     pub r#type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<OpenAIToolCallFunction>,
+}
+
+/// Function call - legacy format used in some API versions
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OpenAIFunctionCall {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
+}
+
+/// Function specification for a tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIToolFunction {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+}
+
+/// Tool definition in request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAITool {
+    pub id: Option<String>,
+    pub r#type: String, // always "function"
+    pub function: OpenAIToolFunction,
+}
+
+/// Tool choice - can be string or object
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpenAIToolChoice {
+    String(String), // "auto", "none", "required"
+    Object {
+        #[serde(rename = "type")]
+        type_: String, // "function"
+        function: OpenAIToolChoiceFunction,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIToolChoiceFunction {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -164,6 +220,8 @@ pub struct OllamaChatRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OllamaTool>>,
 }
 
 /// A single message in an Ollama chat conversation
@@ -171,6 +229,23 @@ pub struct OllamaChatRequest {
 pub struct OllamaMessage {
     pub role: String,
     pub content: String,
+}
+
+/// Ollama tool definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaTool {
+    pub type_: String, // "function"
+    pub function: OllamaToolFunction,
+}
+
+/// Ollama tool function specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaToolFunction {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
 }
 
 /// Ollama chat completion response (non-streaming)
@@ -208,6 +283,19 @@ pub struct OllamaDelta {
     pub content: String,
 }
 
+/// Ollama function call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaFunctionCall {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+}
+
+/// Ollama tool call in message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaToolCall {
+    pub function: OllamaFunctionCall,
+}
+
 // =============================================================================
 // Anthropic - Native Types
 // =============================================================================
@@ -228,6 +316,8 @@ pub struct AnthropicChatRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "stop_sequences")]
     pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<AnthropicTool>>,
 }
 
 /// A single message in an Anthropic conversation
@@ -286,9 +376,41 @@ pub struct AnthropicDelta {
     pub stop_reason: Option<String>,
 }
 
+/// Anthropic tool definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicTool {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+}
+
 // =============================================================================
 // Gemini - Native Types
 // =============================================================================
+
+/// Gemini function declaration for tools
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiFunctionDeclaration {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
+}
+
+/// Gemini tool definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiTool {
+    pub function_declarations: Vec<GeminiFunctionDeclaration>,
+}
+
+/// Gemini function response for tool results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeminiFunctionResponse {
+    pub name: String,
+    pub response: String,
+}
 
 /// Gemini generate content request (for chat)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +418,8 @@ pub struct GeminiChatRequest {
     pub contents: Vec<GeminiContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GeminiGenerationConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<GeminiTool>>,
 }
 
 /// Content block for Gemini
@@ -310,6 +434,8 @@ pub struct GeminiContent {
 pub struct GeminiPart {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_response: Option<GeminiFunctionResponse>,
 }
 
 /// Generation configuration for Gemini

@@ -7,7 +7,7 @@ use lumina::convert::{
     convert_gemini_stream_chunk_to_openai,
 };
 use lumina::types::{
-    OpenAIChatRequest, OpenAIMessage,
+    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall, OpenAIToolCallFunction, OpenAIToolFunction,
     OllamaChatResponse, OllamaStreamChunk, OllamaDelta, OllamaMessage,
     AnthropicChatResponse, AnthropicStreamChunk, AnthropicDelta, AnthropicContent, AnthropicUsage,
     GeminiChatResponse, GeminiStreamChunk, GeminiCandidate, GeminiContent, GeminiPart,
@@ -18,6 +18,7 @@ fn openai_message(role: &str, content: &str) -> OpenAIMessage {
     OpenAIMessage {
         role: role.to_string(),
         content: Some(content.to_string()),
+        ..Default::default()
     }
 }
 
@@ -35,6 +36,7 @@ fn test_openai_to_ollama_conversion() {
         stop: Some(vec!["<stop>".to_string()]),
         presence_penalty: Some(0.1),
         frequency_penalty: Some(0.2),
+        ..Default::default()
     };
 
     let ollama_req = convert_openai_to_ollama(&openai_req);
@@ -114,6 +116,7 @@ fn test_openai_to_anthropic_conversion() {
         stream: Some(true),
         presence_penalty: None,
         frequency_penalty: None,
+        ..Default::default()
     };
 
     let anthropic_req = convert_openai_to_anthropic(&openai_req);
@@ -143,6 +146,7 @@ fn test_openai_to_anthropic_no_system_message() {
         stream: None,
         presence_penalty: None,
         frequency_penalty: None,
+        ..Default::default()
     };
 
     let anthropic_req = convert_openai_to_anthropic(&openai_req);
@@ -221,6 +225,7 @@ fn test_openai_to_gemini_conversion() {
         presence_penalty: None,
         frequency_penalty: None,
         stream: None,
+        ..Default::default()
     };
 
     let gemini_req = convert_openai_to_gemini(&openai_req);
@@ -250,6 +255,7 @@ fn test_gemini_to_openai_response_conversion() {
                     parts: vec![
                         GeminiPart {
                             text: Some("Why did the chicken cross the road? To get to the other side!".to_string()),
+                            function_response: None,
                         }
                     ],
                 },
@@ -285,6 +291,7 @@ fn test_gemini_stream_chunk_to_openai() {
                     parts: vec![
                         GeminiPart {
                             text: Some("Hello".to_string()),
+                            function_response: None,
                         }
                     ],
                 },
@@ -300,4 +307,130 @@ fn test_gemini_stream_chunk_to_openai() {
     assert_eq!(openai_chunk.model, "gemini-pro");
     assert_eq!(openai_chunk.choices.len(), 1);
     assert_eq!(openai_chunk.choices[0].delta.content, Some("Hello".to_string()));
+}
+
+#[test]
+fn test_convert_openai_message_with_tool_calls_to_ollama() {
+    let req = OpenAIChatRequest {
+        model: "llama3".to_string(),
+        messages: vec![
+            OpenAIMessage {
+                role: "user".to_string(),
+                content: Some("What's the weather?".to_string()),
+                ..Default::default()
+            },
+            OpenAIMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(vec![OpenAIToolCall {
+                    id: Some("call_123".to_string()),
+                    r#type: Some("function".to_string()),
+                    function: Some(OpenAIToolCallFunction {
+                        name: Some("get_weather".to_string()),
+                        arguments: Some(r#"{"location":"Beijing"}"#.to_string()),
+                    }),
+                    index: Some(0),
+                }]),
+                ..Default::default()
+            },
+            OpenAIMessage {
+                role: "tool".to_string(),
+                content: Some(r#"{"temperature":"25°C"}"#.to_string()),
+                tool_call_id: Some("call_123".to_string()),
+                name: Some("get_weather".to_string()),
+                ..Default::default()
+            },
+        ],
+        tools: Some(vec![OpenAITool {
+            id: Some("weather_tool".to_string()),
+            r#type: "function".to_string(),
+            function: OpenAIToolFunction {
+                name: "get_weather".to_string(),
+                description: Some("Get weather for a location".to_string()),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                })),
+            },
+        }]),
+        ..Default::default()
+    };
+
+    let ollama_req = convert_openai_to_ollama(&req);
+    // Verify tools are converted
+    assert!(ollama_req.tools.is_some());
+}
+
+#[test]
+fn test_convert_openai_message_with_tool_to_anthropic() {
+    use lumina::types::*;
+    use lumina::convert::convert_openai_to_anthropic;
+
+    let req = OpenAIChatRequest {
+        model: "claude-3-5-sonnet".to_string(),
+        messages: vec![
+            OpenAIMessage {
+                role: "user".to_string(),
+                content: Some("What's the weather?".to_string()),
+                ..Default::default()
+            },
+        ],
+        tools: Some(vec![OpenAITool {
+            id: Some("weather_tool".to_string()),
+            r#type: "function".to_string(),
+            function: OpenAIToolFunction {
+                name: "get_weather".to_string(),
+                description: Some("Get weather for a location".to_string()),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                })),
+            },
+        }]),
+        ..Default::default()
+    };
+
+    let anthropic_req = convert_openai_to_anthropic(&req);
+    // Anthropic has tools at request level
+    assert!(anthropic_req.tools.is_some());
+}
+
+#[test]
+fn test_convert_openai_message_with_tool_to_gemini() {
+    use lumina::types::*;
+    use lumina::convert::convert_openai_to_gemini;
+
+    let req = OpenAIChatRequest {
+        model: "gemini-pro".to_string(),
+        messages: vec![
+            OpenAIMessage {
+                role: "user".to_string(),
+                content: Some("What's the weather?".to_string()),
+                ..Default::default()
+            },
+        ],
+        tools: Some(vec![OpenAITool {
+            id: Some("weather_tool".to_string()),
+            r#type: "function".to_string(),
+            function: OpenAIToolFunction {
+                name: "get_weather".to_string(),
+                description: Some("Get weather for a location".to_string()),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                })),
+            },
+        }]),
+        ..Default::default()
+    };
+
+    let gemini_req = convert_openai_to_gemini(&req);
+    // Gemini has tools in contents or generation_config
+    assert!(gemini_req.tools.is_some());
 }

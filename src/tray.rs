@@ -52,9 +52,11 @@ impl TrayManager {
 
     /// Run tray event loop (blocks main thread)
     pub fn run(self, server_addr: String) -> Result<()> {
+        let shutdown_tx = self.shutdown_tx.clone();
+
         if Self::is_headless() {
             tracing::info!("Headless environment detected, running without tray");
-            Self::wait_for_ctrl_c();
+            Self::wait_for_ctrl_c(shutdown_tx);
             return Ok(());
         }
 
@@ -67,12 +69,12 @@ impl TrayManager {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
                 tracing::warn!("Tray failed to start: {}, running without tray", e);
-                Self::wait_for_ctrl_c();
+                Self::wait_for_ctrl_c(shutdown_tx);
                 Ok(())
             }
             Err(panic) => {
                 tracing::warn!("Tray panicked: {:?}, running without tray", panic);
-                Self::wait_for_ctrl_c();
+                Self::wait_for_ctrl_c(shutdown_tx);
                 Ok(())
             }
         }
@@ -303,13 +305,14 @@ impl TrayManager {
     }
 
     /// Wait for Ctrl+C signal (keeps main thread alive when tray is unavailable)
-    fn wait_for_ctrl_c() {
+    fn wait_for_ctrl_c(shutdown_tx: mpsc::Sender<()>) {
         tokio::runtime::Runtime::new()
             .expect("Failed to create runtime for Ctrl+C wait")
             .block_on(async {
                 tokio::signal::ctrl_c()
                     .await
                     .expect("Failed to listen for ctrl+c");
+                let _ = shutdown_tx.send(()).await;
             });
     }
 }

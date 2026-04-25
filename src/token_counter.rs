@@ -69,6 +69,7 @@ mod tests {
         OpenAIMessage {
             role: role.to_string(),
             content: Some(content.to_string()),
+            ..Default::default()
         }
     }
 

@@ -10,11 +10,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Convert an OpenAI-format chat request to Ollama-native format
 pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
     let messages = req.messages.iter()
-        .map(|m| OllamaMessage {
-            role: m.role.clone(),
-            content: m.content.clone().unwrap_or_default(),
+        .map(|m| {
+            let content = m.content.clone().unwrap_or_default();
+            OllamaMessage {
+                role: m.role.clone(),
+                content,
+            }
         })
         .collect();
+
+    // Convert OpenAI tools to Ollama tools format
+    let tools = req.tools.as_ref().map(|tools| {
+        tools.iter().map(|t| OllamaTool {
+            type_: "function".to_string(),
+            function: OllamaToolFunction {
+                name: t.function.name.clone(),
+                description: t.function.description.clone(),
+                parameters: t.function.parameters.clone(),
+            },
+        })
+        .collect()
+    });
 
     OllamaChatRequest {
         model: req.model.clone(),
@@ -24,6 +40,7 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
         num_predict: req.max_tokens,
         stream: req.stream,
         stop: req.stop.clone(),
+        tools,
     }
 }
 
@@ -44,6 +61,7 @@ pub fn convert_ollama_to_openai(
             message: Some(OpenAIMessage {
                 role: resp.message.role.clone(),
                 content: Some(resp.message.content.clone()),
+                ..Default::default()
             }),
             delta: None,
             finish_reason: if resp.done {
@@ -118,6 +136,16 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     // Anthropic requires max_tokens to be present, so default to 4096 if not specified
     let max_tokens = req.max_tokens.unwrap_or(4096);
 
+    // Convert OpenAI tools to Anthropic tools format
+    let tools = req.tools.as_ref().map(|tools| {
+        tools.iter().map(|t| AnthropicTool {
+            name: t.function.name.clone(),
+            description: t.function.description.clone(),
+            input_schema: t.function.parameters.clone().unwrap_or(serde_json::json!({})),
+        })
+        .collect()
+    });
+
     AnthropicChatRequest {
         model: req.model.clone(),
         messages,
@@ -127,6 +155,7 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
         max_tokens,
         stream: req.stream,
         stop_sequences: req.stop.clone(),
+        tools,
     }
 }
 
@@ -159,6 +188,7 @@ pub fn convert_anthropic_to_openai(
             message: Some(OpenAIMessage {
                 role: "assistant".to_string(),
                 content: Some(content),
+                ..Default::default()
             }),
             delta: None,
             finish_reason,
@@ -217,12 +247,28 @@ pub fn convert_anthropic_stream_chunk_to_openai(
 /// Convert an OpenAI-format chat request to Gemini-native format
 pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
     let contents = req.messages.iter()
-        .map(|m| GeminiContent {
-            // Gemini uses "model" instead of "assistant"
-            role: if m.role == "assistant" { "model".to_string() } else { m.role.clone() },
-            parts: vec![GeminiPart {
-                text: m.content.clone(),
-            }],
+        .map(|m| {
+            // Handle tool role messages - convert to function_response parts
+            let parts: Vec<GeminiPart> = if m.role == "tool" {
+                vec![GeminiPart {
+                    text: None,
+                    function_response: Some(GeminiFunctionResponse {
+                        name: m.name.clone().unwrap_or_default(),
+                        response: m.content.clone().unwrap_or_default(),
+                    }),
+                }]
+            } else {
+                vec![GeminiPart {
+                    text: m.content.clone(),
+                    function_response: None,
+                }]
+            };
+
+            GeminiContent {
+                // Gemini uses "model" instead of "assistant"
+                role: if m.role == "assistant" { "model".to_string() } else { m.role.clone() },
+                parts,
+            }
         })
         .collect();
 
@@ -237,9 +283,22 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
         None
     };
 
+    // Convert OpenAI tools to Gemini tools format
+    let tools = req.tools.as_ref().map(|tools| {
+        tools.iter().map(|t| GeminiTool {
+            function_declarations: vec![GeminiFunctionDeclaration {
+                name: t.function.name.clone(),
+                description: t.function.description.clone(),
+                parameters: t.function.parameters.clone(),
+            }],
+        })
+        .collect()
+    });
+
     GeminiChatRequest {
         contents,
         generation_config,
+        tools,
     }
 }
 
@@ -274,6 +333,7 @@ pub fn convert_gemini_to_openai(
                 message: Some(OpenAIMessage {
                     role: "assistant".to_string(),
                     content: Some(content),
+                    ..Default::default()
                 }),
                 delta: None,
                 finish_reason,
