@@ -1,0 +1,18 @@
+services:
+  lumina:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml.local:/app/config.yaml:ro
+      - lumina-logs:/app/logs
+      - lumina-stats:/app/stats
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+
+volumes:
+  lumina-logs:
+  lumina-stats:

@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+assets/
+
+# CI/CD
+.github/
+
+# Local configs
+config.yaml.local
+*.local
+
+# Logs and stats
+*.log
+*.jsonl
+token_stats.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
