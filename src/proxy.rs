@@ -133,6 +133,25 @@ pub fn build_backend_url_for_endpoint(
                 })
             }
         }
+
+        ProviderType::Moonlight => {
+            // Moonlight is OpenAI-compatible, use same URL construction
+            if let Some(url) = &route.url {
+                Ok(url.clone())
+            } else if let Some(base_url) = &route.base_url {
+                let endpoint = if use_responses_api {
+                    "/v1/responses"
+                } else {
+                    "/v1/chat/completions"
+                };
+                Ok(format!("{}{}", base_url.trim_end_matches('/'), endpoint))
+            } else {
+                Err(ProxyError::ConfigError(format!(
+                    "Moonlight route for model '{}' missing either url or base_url",
+                    model
+                )))
+            }
+        }
     }
 }
 
@@ -254,23 +273,23 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
 
     Some(OpenAIToolCall {
         index: Some(index),
-        id,
+        id: Some(id),
         r#type: Some("function".to_string()),  // type is reserved keyword in Rust
-        function: OpenAIToolCallFunction {
+        function: Some(OpenAIToolCallFunction {
             name: Some(func_name.to_string()),
             arguments: Some(arguments.to_string()),
-        },
+        }),
     })
 }
 
 /// Generate a random 12-character alphanumeric ID
 fn generate_random_id() -> String {
     use std::iter;
+    use rand::Rng;
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::Rng::random_u64();
+    let mut rng = rand::thread_rng();
     iter::repeat_with(|| {
-        let idx = (rng % CHARSET.len() as u64) as usize;
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let idx = rng.gen_range(0..CHARSET.len());
         CHARSET[idx] as char
     })
     .take(12)
@@ -358,6 +377,14 @@ async fn handle_non_streaming(
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) })),
+                )
+            }),
+
+        ProviderType::Moonlight => serde_json::to_vec(&convert_openai_to_moonlight(&outgoing_req))
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Moonlight request: {}", e) })),
                 )
             }),
     };
@@ -448,6 +475,37 @@ async fn handle_non_streaming(
                     (
                         StatusCode::BAD_GATEWAY,
                         Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) })),
+                    )
+                })?;
+            let tokens = openai_resp.usage.completion_tokens as usize;
+            // Override model name to client-requested name for response
+            openai_resp.model = model.clone();
+            (openai_resp, tokens)
+        }
+
+        ProviderType::Moonlight => {
+            // Moonlight is OpenAI-compatible, handle like OpenAI
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+
+            tracing::debug!(
+                status = %status,
+                provider = ?route.provider_type,
+                body_len = %body_text.len(),
+                "Received upstream response body"
+            );
+
+            let mut openai_resp: OpenAIChatResponse =
+                serde_json::from_str(&body_text).map_err(|e| {
+                    tracing::warn!(
+                        status = %status,
+                        provider = ?route.provider_type,
+                        body_preview = %body_text.chars().take(500).collect::<String>(),
+                        "Failed to parse Moonlight response: {}", e
+                    );
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Json(json!({ "error": format!("Failed to parse Moonlight response: {}", e) })),
                     )
                 })?;
             let tokens = openai_resp.usage.completion_tokens as usize;
@@ -578,6 +636,14 @@ async fn handle_streaming(
                     Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) })),
                 )
             }),
+
+        ProviderType::Moonlight => serde_json::to_vec(&convert_openai_to_moonlight(&streaming_req))
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Moonlight request: {}", e) })),
+                )
+            }),
     };
 
     let body = match body {
@@ -628,6 +694,7 @@ async fn handle_streaming(
             ProviderType::Ollama => "ollama",
             ProviderType::Anthropic => "anthropic",
             ProviderType::Gemini => "gemini",
+            ProviderType::Moonlight => "moonlight",
             ProviderType::OpenAiCompatible => "chatcmpl",
         },
         created
@@ -856,6 +923,61 @@ async fn handle_streaming(
                                         }
                                     );
                                     Err(format!("Failed to parse OpenAI stream chunk: {}", e))
+                                }
+                            }
+                        }
+
+                        ProviderType::Moonlight => {
+                            // Moonlight: parse tool calls from content markers
+                            match serde_json::from_str::<OpenAIStreamChunk>(data) {
+                                Ok(mut openai_chunk) => {
+                                    let mut has_content = false;
+
+                                    for choice in &mut openai_chunk.choices {
+                                        if let Some(content) = &choice.delta.content {
+                                            let content_str = content.as_str();
+
+                                            // Check for tool call section markers
+                                            if content_str.contains("<|tool_calls_section_begin|>") {
+                                                let parsed = parse_moonlight_tool_calls(content_str);
+                                                let text_only = strip_moonlight_tool_markers(content_str);
+
+                                                if !parsed.is_empty() {
+                                                    for tc in &parsed {
+                                                        if let Some(ref f) = tc.function {
+                                                            if let Some(ref n) = f.name { counter.add_delta(n); }
+                                                            if let Some(ref a) = f.arguments { counter.add_delta(a); }
+                                                        }
+                                                    }
+                                                    choice.delta.tool_calls = Some(parsed);
+                                                    choice.delta.content = if text_only.trim().is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(text_only)
+                                                    };
+                                                    has_content = true;
+                                                } else if !text_only.is_empty() {
+                                                    counter.add_delta(&text_only);
+                                                    has_content = true;
+                                                }
+                                            } else {
+                                                counter.add_delta(content_str);
+                                                has_content = true;
+                                            }
+                                        }
+                                    }
+
+                                    if !has_content {
+                                        tracing::trace!("Moonlight chunk: {}", data.len().min(200));
+                                    }
+
+                                    openai_chunk.id = id.clone();
+                                    openai_chunk.model = model.clone();
+                                    Ok(openai_chunk)
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to parse Moonlight stream chunk: {}", e);
+                                    Err(format!("Failed to parse Moonlight stream chunk: {}", e))
                                 }
                             }
                         }
@@ -1795,6 +1917,7 @@ fn build_models_url(route: &RouteConfig) -> Option<String> {
             })
         }
         ProviderType::Ollama | ProviderType::Anthropic | ProviderType::Gemini => None,
+        ProviderType::Moonlight => None,  // Moonlight doesn't support model listing endpoint
     }
 }
 
@@ -1846,6 +1969,7 @@ async fn fetch_upstream_model_info(
         ProviderType::Anthropic => "anthropic",
         ProviderType::Ollama => "ollama",
         ProviderType::Gemini => "google",
+        ProviderType::Moonlight => "moonlight",
         ProviderType::OpenAiCompatible => "sglang",
     };
 
