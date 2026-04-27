@@ -22,6 +22,21 @@ use tokio::sync::Mutex;
 use tokio::time::Instant;
 
 // =============================================================================
+// Streaming Chunk Result - Supports multiple chunks for OpenAI streaming format
+// =============================================================================
+
+/// Result type for streaming chunk parsing, supporting multiple chunks for
+/// OpenAI-compatible tool call streaming
+enum StreamChunkResult {
+    /// A single streaming chunk
+    Single(OpenAIStreamChunk),
+    /// Multiple streaming chunks (used for Moonlight tool calls in OpenAI format)
+    Multiple(Vec<OpenAIStreamChunk>),
+    /// Parse error
+    Error(String),
+}
+
+// =============================================================================
 // Proxy State - Shared application state
 // =============================================================================
 
@@ -778,8 +793,7 @@ async fn handle_streaming(
                     }
 
                     // Parse and convert chunk based on provider
-                    let openai_chunk_result: Result<OpenAIStreamChunk, String> = match provider_type
-                    {
+                    let openai_chunk_result: StreamChunkResult = match provider_type {
                         ProviderType::Ollama => {
                             match serde_json::from_str::<OllamaStreamChunk>(data) {
                                 Ok(ollama_chunk) => {
@@ -787,16 +801,19 @@ async fn handle_streaming(
                                     if let Some(delta) = &ollama_chunk.delta {
                                         counter.add_delta(&delta.content);
                                     }
-                                    Ok(convert_ollama_stream_chunk_to_openai(
-                                        &ollama_chunk,
-                                        &id,
-                                        created,
-                                        &model,
-                                    ))
+                                    StreamChunkResult::Single(
+                                        convert_ollama_stream_chunk_to_openai(
+                                            &ollama_chunk,
+                                            &id,
+                                            created,
+                                            &model,
+                                        ),
+                                    )
                                 }
-                                Err(e) => {
-                                    Err(format!("Failed to parse Ollama stream chunk: {}", e))
-                                }
+                                Err(e) => StreamChunkResult::Error(format!(
+                                    "Failed to parse Ollama stream chunk: {}",
+                                    e
+                                )),
                             }
                         }
 
@@ -808,15 +825,18 @@ async fn handle_streaming(
                                     {
                                         counter.add_delta(text);
                                     }
-                                    Ok(convert_anthropic_stream_chunk_to_openai(
-                                        &anthropic_chunk,
-                                        created,
-                                        &model,
-                                    ))
+                                    StreamChunkResult::Single(
+                                        convert_anthropic_stream_chunk_to_openai(
+                                            &anthropic_chunk,
+                                            created,
+                                            &model,
+                                        ),
+                                    )
                                 }
-                                Err(e) => {
-                                    Err(format!("Failed to parse Anthropic stream chunk: {}", e))
-                                }
+                                Err(e) => StreamChunkResult::Error(format!(
+                                    "Failed to parse Anthropic stream chunk: {}",
+                                    e
+                                )),
                             }
                         }
 
@@ -832,16 +852,19 @@ async fn handle_streaming(
                                             }
                                         }
                                     }
-                                    Ok(convert_gemini_stream_chunk_to_openai(
-                                        &gemini_chunk,
-                                        &id,
-                                        created,
-                                        &model,
-                                    ))
+                                    StreamChunkResult::Single(
+                                        convert_gemini_stream_chunk_to_openai(
+                                            &gemini_chunk,
+                                            &id,
+                                            created,
+                                            &model,
+                                        ),
+                                    )
                                 }
-                                Err(e) => {
-                                    Err(format!("Failed to parse Gemini stream chunk: {}", e))
-                                }
+                                Err(e) => StreamChunkResult::Error(format!(
+                                    "Failed to parse Gemini stream chunk: {}",
+                                    e
+                                )),
                             }
                         }
 
@@ -918,7 +941,7 @@ async fn handle_streaming(
                                     openai_chunk.id = id.clone();
                                     // Override model name to client-requested name
                                     openai_chunk.model = model.clone();
-                                    Ok(openai_chunk)
+                                    StreamChunkResult::Single(openai_chunk)
                                 }
                                 Err(e) => {
                                     // Log raw data when parse fails for debugging
@@ -931,16 +954,21 @@ async fn handle_streaming(
                                             "data too long, see trace"
                                         }
                                     );
-                                    Err(format!("Failed to parse OpenAI stream chunk: {}", e))
+                                    StreamChunkResult::Error(format!(
+                                        "Failed to parse OpenAI stream chunk: {}",
+                                        e
+                                    ))
                                 }
                             }
                         }
 
                         ProviderType::Moonlight => {
                             // Moonlight: parse tool calls from content markers
+                            // Output as OpenAI streaming SSE format
                             match serde_json::from_str::<OpenAIStreamChunk>(data) {
                                 Ok(mut openai_chunk) => {
                                     let mut has_content = false;
+                                    let mut tool_call_chunks: Vec<OpenAIStreamChunk> = Vec::new();
 
                                     for choice in &mut openai_chunk.choices {
                                         if let Some(content) = &choice.delta.content {
@@ -955,6 +983,7 @@ async fn handle_streaming(
                                                     strip_moonlight_tool_markers(content_str);
 
                                                 if !parsed.is_empty() {
+                                                    // Count tokens
                                                     for tc in &parsed {
                                                         if let Some(ref f) = tc.function {
                                                             if let Some(ref n) = f.name {
@@ -965,16 +994,107 @@ async fn handle_streaming(
                                                             }
                                                         }
                                                     }
-                                                    choice.delta.tool_calls = Some(parsed);
-                                                    choice.delta.content =
-                                                        if text_only.trim().is_empty() {
-                                                            None
-                                                        } else {
-                                                            Some(text_only)
+
+                                                    // Create OpenAI streaming chunks for each tool call
+                                                    // First chunk: role + tool_calls with first tool call
+                                                    let first_tc = &parsed[0];
+                                                    let first_chunk = OpenAIStreamChunk {
+                                                        id: id.clone(),
+                                                        object: "chat.completion.chunk".to_string(),
+                                                        created,
+                                                        model: model.clone(),
+                                                        choices: vec![OpenAIStreamChoice {
+                                                            index: 0,
+                                                            delta: OpenAIDelta {
+                                                                role: Some("assistant".to_string()),
+                                                                content: if text_only
+                                                                    .trim()
+                                                                    .is_empty()
+                                                                {
+                                                                    None
+                                                                } else {
+                                                                    Some(text_only.clone())
+                                                                },
+                                                                reasoning: None,
+                                                                tool_calls: Some(vec![
+                                                                    OpenAIToolCall {
+                                                                        index: first_tc.index,
+                                                                        id: first_tc.id.clone(),
+                                                                        r#type: first_tc
+                                                                            .r#type
+                                                                            .clone(),
+                                                                        function: first_tc
+                                                                            .function
+                                                                            .clone(),
+                                                                    },
+                                                                ]),
+                                                            },
+                                                            finish_reason: None,
+                                                        }],
+                                                        usage: None,
+                                                    };
+                                                    tool_call_chunks.push(first_chunk);
+
+                                                    // Subsequent tool calls (index > 0) as separate chunks
+                                                    for tc in parsed.iter().skip(1) {
+                                                        let chunk = OpenAIStreamChunk {
+                                                            id: id.clone(),
+                                                            object: "chat.completion.chunk"
+                                                                .to_string(),
+                                                            created,
+                                                            model: model.clone(),
+                                                            choices: vec![OpenAIStreamChoice {
+                                                                index: 0,
+                                                                delta: OpenAIDelta {
+                                                                    role: None,
+                                                                    content: None,
+                                                                    reasoning: None,
+                                                                    tool_calls: Some(vec![
+                                                                        OpenAIToolCall {
+                                                                            index: tc.index,
+                                                                            id: tc.id.clone(),
+                                                                            r#type: tc
+                                                                                .r#type
+                                                                                .clone(),
+                                                                            function: tc
+                                                                                .function
+                                                                                .clone(),
+                                                                        },
+                                                                    ]),
+                                                                },
+                                                                finish_reason: None,
+                                                            }],
+                                                            usage: None,
                                                         };
+                                                        tool_call_chunks.push(chunk);
+                                                    }
+
+                                                    // Final chunk: finish_reason = "tool_calls"
+                                                    let final_chunk = OpenAIStreamChunk {
+                                                        id: id.clone(),
+                                                        object: "chat.completion.chunk".to_string(),
+                                                        created,
+                                                        model: model.clone(),
+                                                        choices: vec![OpenAIStreamChoice {
+                                                            index: 0,
+                                                            delta: OpenAIDelta {
+                                                                role: None,
+                                                                content: None,
+                                                                reasoning: None,
+                                                                tool_calls: None,
+                                                            },
+                                                            finish_reason: Some(
+                                                                "tool_calls".to_string(),
+                                                            ),
+                                                        }],
+                                                        usage: None,
+                                                    };
+                                                    tool_call_chunks.push(final_chunk);
+
                                                     has_content = true;
                                                 } else if !text_only.is_empty() {
                                                     counter.add_delta(&text_only);
+                                                    choice.delta.content = Some(text_only);
                                                     has_content = true;
                                                 }
                                             } else {
@@ -988,20 +1108,28 @@ async fn handle_streaming(
                                         tracing::trace!("Moonlight chunk: {}", data.len().min(200));
                                     }
 
-                                    openai_chunk.id = id.clone();
-                                    openai_chunk.model = model.clone();
-                                    Ok(openai_chunk)
+                                    if !tool_call_chunks.is_empty() {
+                                        // Return multiple chunks in OpenAI streaming format
+                                        StreamChunkResult::Multiple(tool_call_chunks)
+                                    } else {
+                                        openai_chunk.id = id.clone();
+                                        openai_chunk.model = model.clone();
+                                        StreamChunkResult::Single(openai_chunk)
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::warn!("Failed to parse Moonlight stream chunk: {}", e);
-                                    Err(format!("Failed to parse Moonlight stream chunk: {}", e))
+                                    StreamChunkResult::Error(format!(
+                                        "Failed to parse Moonlight stream chunk: {}",
+                                        e
+                                    ))
                                 }
                             }
                         }
                     };
 
                     match openai_chunk_result {
-                        Ok(mut chunk) => {
+                        StreamChunkResult::Single(mut chunk) => {
                             // Add usage to first chunk for clients that expect prompt_tokens (e.g., litellm)
                             if is_first_chunk {
                                 chunk.usage = Some(OpenAIUsage {
@@ -1029,7 +1157,29 @@ async fn handle_streaming(
                                 format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
                             yielded_chunks.push(Ok(Bytes::from(sse_line)));
                         }
-                        Err(e) => {
+                        StreamChunkResult::Multiple(mut chunks) => {
+                            // Add usage to first chunk for clients that expect prompt_tokens
+                            if is_first_chunk && let Some(first) = chunks.first_mut() {
+                                first.usage = Some(OpenAIUsage {
+                                    prompt_tokens: prompt_tokens_stream as u32,
+                                    completion_tokens: 0,
+                                    total_tokens: prompt_tokens_stream as u32,
+                                });
+                            }
+
+                            // Push all chunks as SSE
+                            for chunk in chunks {
+                                tracing::trace!(
+                                    chunk_id = %chunk.id,
+                                    chunk_model = %chunk.model,
+                                    "Streaming chunk (tool_call)"
+                                );
+                                let sse_line =
+                                    format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
+                                yielded_chunks.push(Ok(Bytes::from(sse_line)));
+                            }
+                        }
+                        StreamChunkResult::Error(e) => {
                             tracing::warn!("{}", e);
                             // Send parse error to client as a warning chunk
                             let error_chunk = serde_json::json!({
