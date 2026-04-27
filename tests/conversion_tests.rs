@@ -4,6 +4,7 @@ use lumina::convert::{
     convert_ollama_stream_chunk_to_openai, convert_ollama_to_openai, convert_openai_to_anthropic,
     convert_openai_to_gemini, convert_openai_to_ollama,
 };
+use lumina::proxy::parse_moonlight_tool_calls;
 use lumina::types::{
     AnthropicChatResponse, AnthropicContent, AnthropicDelta, AnthropicStreamChunk, AnthropicUsage,
     GeminiCandidate, GeminiChatResponse, GeminiContent, GeminiPart, GeminiStreamChunk,
@@ -732,4 +733,72 @@ fn test_responses_response_serialization() {
     assert_eq!(deserialized.object, "response");
     assert_eq!(deserialized.status, "completed");
     assert_eq!(deserialized.usage.unwrap().total_tokens, 15);
+}
+
+// =============================================================================
+// Moonlight Tool Call Parsing Tests
+// =============================================================================
+
+#[test]
+fn test_parse_moonlight_tool_calls_basic() {
+    let content = "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{\"location\": \"北京\"}<|tool_call_end|><|tool_calls_section_end|>";
+    let tool_calls = parse_moonlight_tool_calls(content);
+
+    assert_eq!(tool_calls.len(), 1);
+    let tc = &tool_calls[0];
+    assert_eq!(tc.index, Some(0));
+    assert!(tc.id.as_ref().unwrap().starts_with("call_"));
+    assert_eq!(tc.function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
+    assert_eq!(tc.function.as_ref().unwrap().arguments.as_ref().unwrap(), "{\"location\": \"北京\"}");
+}
+
+#[test]
+fn test_parse_moonlight_tool_calls_multiple() {
+    let content = "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{\"location\": \"北京\"}<|tool_call_end|><|tool_call_begin|>functions.get_time:1<|tool_call_argument_begin|>{\"timezone\": \"Asia/Shanghai\"}<|tool_call_end|><|tool_calls_section_end|>";
+    let tool_calls = parse_moonlight_tool_calls(content);
+
+    assert_eq!(tool_calls.len(), 2);
+
+    assert_eq!(tool_calls[0].function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
+    assert_eq!(tool_calls[0].index, Some(0));
+
+    assert_eq!(tool_calls[1].function.as_ref().unwrap().name.as_ref().unwrap(), "get_time");
+    assert_eq!(tool_calls[1].index, Some(1));
+}
+
+#[test]
+fn test_parse_moonlight_tool_calls_with_text() {
+    // Text before and after markers should be ignored by the parser
+    // but the parser only extracts tool calls, it doesn't preserve text
+    let content = "Some text before<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{\"location\": \"北京\"}<|tool_call_end|><|tool_calls_section_end|>Some text after";
+    let tool_calls = parse_moonlight_tool_calls(content);
+
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
+}
+
+#[test]
+fn test_parse_moonlight_tool_calls_empty() {
+    // No tool calls section
+    let content = "Just regular text content";
+    let tool_calls = parse_moonlight_tool_calls(content);
+    assert!(tool_calls.is_empty());
+
+    // Empty section
+    let content = "<|tool_calls_section_begin|><|tool_calls_section_end|>";
+    let tool_calls = parse_moonlight_tool_calls(content);
+    assert!(tool_calls.is_empty());
+}
+
+#[test]
+fn test_parse_moonlight_tool_calls_malformed() {
+    // Missing end marker - should gracefully handle
+    let content = "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0<|tool_call_argument_begin|>{\"location\": \"北京\"}";
+    let tool_calls = parse_moonlight_tool_calls(content);
+    assert!(tool_calls.is_empty());
+
+    // Missing argument separator
+    let content = "<|tool_calls_section_begin|><|tool_call_begin|>functions.get_weather:0{\"location\": \"北京\"}<|tool_call_end|><|tool_calls_section_end|>";
+    let tool_calls = parse_moonlight_tool_calls(content);
+    assert!(tool_calls.is_empty());
 }

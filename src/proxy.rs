@@ -207,7 +207,7 @@ fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
 /// - `<|tool_call_argument_begin|>` - separates tool ID from arguments
 ///
 /// Tool ID format: `functions.{func_name}:{idx}`
-pub(crate) fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
+pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
     let mut tool_calls = Vec::new();
 
     // Find the tool calls section
