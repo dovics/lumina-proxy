@@ -114,7 +114,7 @@ impl StatsWriter {
                             }
 
                             let parts: Vec<&str> = key.split(':').collect();
-                            let model = parts.get(0).unwrap_or(&"").to_string();
+                            let model = parts.first().unwrap_or(&"").to_string();
                             let provider = parts.get(1).unwrap_or(&"").to_string();
 
                             let request_count = metrics.len() as u64;

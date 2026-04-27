@@ -333,23 +333,23 @@ async fn handle_non_streaming(
 
     // Check for abnormal responses and warn
     for choice in &openai_resp.choices {
-        if let Some(reason) = &choice.finish_reason {
-            if reason == "length" {
-                tracing::warn!(
-                    model = %openai_resp.model,
-                    finish_reason = %reason,
-                    "Response was truncated due to token limit (max_tokens or model limit)"
-                );
-            }
+        if let Some(reason) = &choice.finish_reason
+            && reason == "length"
+        {
+            tracing::warn!(
+                model = %openai_resp.model,
+                finish_reason = %reason,
+                "Response was truncated due to token limit (max_tokens or model limit)"
+            );
         }
-        if let Some(msg) = &choice.message {
-            if msg.content.is_none() || msg.content.as_ref().map(|c| c.is_empty()).unwrap_or(false) {
-                tracing::warn!(
-                    model = %openai_resp.model,
-                    finish_reason = %choice.finish_reason.clone().unwrap_or_default(),
-                    "Response has no content"
-                );
-            }
+        if let Some(msg) = &choice.message
+            && (msg.content.is_none() || msg.content.as_ref().map(|c| c.is_empty()).unwrap_or(false))
+        {
+            tracing::warn!(
+                model = %openai_resp.model,
+                finish_reason = %choice.finish_reason.clone().unwrap_or_default(),
+                "Response has no content"
+            );
         }
     }
 
