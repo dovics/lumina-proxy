@@ -36,7 +36,7 @@ Return to client
 
 ### 1. Add Moonlight ProviderType
 
-**File: `src/types.rs`**
+**File: `src/config.rs`**
 
 Add `Moonlight` to `ProviderType` enum:
 ```rust
@@ -163,13 +163,11 @@ Add tests in `tests/conversion_tests.rs`:
 
 | File | Changes |
 |------|---------|
-| `src/types.rs` | Add `Moonlight` to `ProviderType` enum |
+| `src/config.rs` | Add `Moonlight` to `ProviderType` enum |
 | `src/convert.rs` | Add `convert_openai_to_moonlight()` function |
 | `src/proxy.rs` | Add Moonlight branch in streaming handler, add parsing functions |
 | `config.yaml` | Add Moonlight provider example |
 | `tests/conversion_tests.rs` | Add Moonlight tool call parsing tests |
-
-**Note:** `config.rs` does not require modification - provider type validation is enum-based and automatically handles new variants.
 
 ## Success Criteria
 
