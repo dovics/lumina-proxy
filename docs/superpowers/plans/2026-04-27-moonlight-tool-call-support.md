@@ -230,6 +230,22 @@ fn generate_random_id() -> String {
     .take(12)
     .collect()
 }
+
+/// Strip Moonlight tool call markers from content, preserving surrounding text
+fn strip_moonlight_tool_markers(content: &str) -> String {
+    let markers = [
+        "<|tool_calls_section_begin|>",
+        "<|tool_calls_section_end|>",
+        "<|tool_call_begin|>",
+        "<|tool_call_end|>",
+        "<|tool_call_argument_begin|>",
+    ];
+    let mut result = content.to_string();
+    for marker in &markers {
+        result = result.replace(marker, "");
+    }
+    result
+}
 ```
 
 - [ ] **Step 2: Verify compilation**
@@ -332,14 +348,18 @@ ProviderType::Moonlight => {
                 }
             }
 
-            // If we found tool calls in content, replace the content with empty
-            // and put the parsed tool_calls in the delta
+            // If we found tool calls in content, extract them and keep any text before/after markers
             for choice in &mut openai_chunk.choices {
                 if let Some(content) = &choice.delta.content.clone() {
                     let parsed_tool_calls = parse_moonlight_tool_calls(&content);
                     if !parsed_tool_calls.is_empty() {
-                        // Clear content and set tool_calls
-                        choice.delta.content = None;
+                        // Strip tool call markers from content but keep surrounding text
+                        let text_content = strip_moonlight_tool_markers(&content);
+                        if !text_content.trim().is_empty() {
+                            choice.delta.content = Some(text_content);
+                        } else {
+                            choice.delta.content = None;
+                        }
                         choice.delta.tool_calls = Some(parsed_tool_calls);
                     }
                 }
@@ -381,110 +401,6 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 ---
 
 ## Task 6: Add Moonlight Configuration Example
-
-**Files:**
-- Modify: `src/proxy.rs`
-
-- [ ] **Step 1: Read handle_streaming function to find insertion point**
-
-Read `src/proxy.rs` lines 410-550 to understand the streaming handling. Look for:
-1. The `match provider_type` block (around line 430-500)
-2. The OpenAI-compatible branch to use as template
-
-- [ ] **Step 2: Add Moonlight branch in the provider_type match**
-
-In the `handle_streaming` function, find the match block for `provider_type` (around line 430). Add a new branch:
-
-```rust
-ProviderType::Moonlight => {
-    // Moonlight accepts OpenAI format, but returns tool calls embedded in content
-    // as special markers that need parsing
-    match serde_json::from_str::<OpenAIStreamChunk>(data) {
-        Ok(mut openai_chunk) => {
-            let mut has_content = false;
-
-            // Process each choice
-            for choice in &openai_chunk.choices {
-                // Count content tokens
-                if let Some(content) = &choice.delta.content
-                    && !content.is_empty()
-                {
-                    counter.add_delta(content);
-                    has_content = true;
-                }
-
-                // Parse tool calls from content markers
-                if let Some(content) = &choice.delta.content {
-                    let parsed_tool_calls = parse_moonlight_tool_calls(content);
-                    if !parsed_tool_calls.is_empty() {
-                        // We found tool calls in the content
-                        // Add them to the token counter
-                        for tc in &parsed_tool_calls {
-                            if let Some(ref func) = tc.function {
-                                if let Some(ref name) = func.name {
-                                    counter.add_delta(name);
-                                }
-                                if let Some(ref args) = func.arguments {
-                                    counter.add_delta(args);
-                                }
-                            }
-                        }
-                        has_content = true;
-                    }
-                }
-            }
-
-            // If we found tool calls in content, replace the content with empty
-            // and put the parsed tool_calls in the delta
-            for choice in &mut openai_chunk.choices {
-                if let Some(content) = &choice.delta.content.clone() {
-                    let parsed_tool_calls = parse_moonlight_tool_calls(&content);
-                    if !parsed_tool_calls.is_empty() {
-                        // Clear content and set tool_calls
-                        choice.delta.content = None;
-                        choice.delta.tool_calls = Some(parsed_tool_calls);
-                    }
-                }
-            }
-
-            if !has_content {
-                tracing::trace!(
-                    "Moonlight chunk with no countable content: {}",
-                    data.len().min(500)
-                );
-            }
-
-            openai_chunk.id = id.clone();
-            openai_chunk.model = model.clone();
-            Ok(openai_chunk)
-        }
-        Err(e) => {
-            tracing::warn!("Failed to parse Moonlight stream chunk: {}", e);
-            Err(format!("Failed to parse Moonlight stream chunk: {}", e))
-        }
-    }
-}
-```
-
-**Important:** Also add `Moonlight` to the response_id format match block (around line 520-530) and to any other places where ProviderType is matched.
-
-- [ ] **Step 3: Verify compilation**
-
-Run: `cargo build 2>&1 | head -100`
-Expected: Should compile. Fix any missing matches.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src/proxy.rs
-git commit -m "feat: Add Moonlight branch in handle_streaming
-
-Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
-```
-
----
-
-## Task 5: Add Moonlight Configuration Example
 
 **Files:**
 - Modify: `config.yaml`
