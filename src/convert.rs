@@ -109,6 +109,7 @@ pub fn convert_ollama_stream_chunk_to_openai(
                 None
             },
         }],
+        usage: None,
     }
 }
 
@@ -237,6 +238,7 @@ pub fn convert_anthropic_stream_chunk_to_openai(
             },
             finish_reason,
         }],
+        usage: None,
     }
 }
 
@@ -405,6 +407,7 @@ pub fn convert_gemini_stream_chunk_to_openai(
         created,
         model: model.to_string(),
         choices,
+        usage: None,
     }
 }
 

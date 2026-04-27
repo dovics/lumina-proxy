@@ -168,6 +168,8 @@ pub struct OpenAIStreamChunk {
     pub created: u64,
     pub model: String,
     pub choices: Vec<OpenAIStreamChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<OpenAIUsage>,
 }
 
 /// Streaming choice for OpenAI chunks

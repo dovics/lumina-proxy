@@ -484,11 +484,14 @@ async fn handle_streaming(
         model_clone,
         String::new(),
         first_bytes_time.clone(),
+        true, // is_first_chunk - we'll add usage to the first successful chunk
     );
 
+    // Clone prompt_tokens for the transformed stream (moved into closure)
+    let prompt_tokens_stream = prompt_tokens;
     let transformed_stream = futures_util::stream::unfold(
         initial_state,
-        move |(mut bytes_stream, counter, id, created, model, mut buffer, first_bytes_time)| async move {
+        move |(mut bytes_stream, counter, id, created, model, mut buffer, first_bytes_time, is_first_chunk)| async move {
             let provider_type = provider_type;
 
             // Continuously read and process until we have at least one chunk to yield,
@@ -665,7 +668,16 @@ async fn handle_streaming(
                     };
 
                     match openai_chunk_result {
-                        Ok(chunk) => {
+                        Ok(mut chunk) => {
+                            // Add usage to first chunk for clients that expect prompt_tokens (e.g., litellm)
+                            if is_first_chunk {
+                                chunk.usage = Some(OpenAIUsage {
+                                    prompt_tokens: prompt_tokens_stream as u32,
+                                    completion_tokens: 0,
+                                    total_tokens: prompt_tokens_stream as u32,
+                                });
+                            }
+
                             // Trace log each streaming chunk
                             let first_delta = chunk.choices.first()
                                 .and_then(|c| c.delta.content.clone())
@@ -710,7 +722,7 @@ async fn handle_streaming(
                         let s = String::from_utf8_lossy(bytes.as_ref());
                         buffer = s.to_string() + &buffer;
                     }
-                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer, first_bytes_time)));
+                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer, first_bytes_time, false)));
                 }
 
                 // No chunks ready yet - need to read more data from backend
@@ -726,7 +738,7 @@ async fn handle_streaming(
                                 )));
                                 return Some((
                                     error_chunk,
-                                    (bytes_stream, counter, id, created, model, buffer, first_bytes_time)
+                                    (bytes_stream, counter, id, created, model, buffer, first_bytes_time, false)
                                 ));
                             }
                         };
