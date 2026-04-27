@@ -532,21 +532,21 @@ pub fn convert_chat_stream_chunk_to_responses(
 
     // Extract delta content
     for choice in &chunk.choices {
-        if let Some(ref content) = choice.delta.content {
-            if !content.is_empty() {
-                // output_text.delta event
-                let delta_event = serde_json::json!({
-                    "type": "response.output_text.delta",
-                    "output_index": 0,
-                    "content_index": 0,
-                    "delta": {
-                        "type": "text",
-                        "text": content
-                    },
-                    "created_at": created_at
-                });
-                events.push(("response.output_text.delta".to_string(), delta_event));
-            }
+        if let Some(ref content) = choice.delta.content
+            && !content.is_empty()
+        {
+            // output_text.delta event
+            let delta_event = serde_json::json!({
+                "type": "response.output_text.delta",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": {
+                    "type": "text",
+                    "text": content
+                },
+                "created_at": created_at
+            });
+            events.push(("response.output_text.delta".to_string(), delta_event));
         }
 
         // If finish_reason, send response.completed event

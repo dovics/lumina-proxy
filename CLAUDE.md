@@ -21,8 +21,8 @@ cargo run -- /path/to/config.yaml
 cargo test
 cargo test -- test_name  # Run single test by name
 
-# Run linter
-cargo clippy
+# Run linter (MUST PASS with -D warnings before any push)
+cargo clippy -- -D warnings
 
 # Check formatting
 cargo fmt --check
@@ -120,6 +120,21 @@ When modifying code, consider if your change:
 
 - `tests/config_tests.rs` - Configuration parsing and validation tests
 - `tests/conversion_tests.rs` - Provider conversion tests
+
+## Pre-Push Checklist
+
+**ALWAYS** run these before pushing code:
+
+```bash
+# 1. Clippy with deny warnings (CI will fail on this)
+cargo clippy -- -D warnings
+
+# 2. All tests pass
+cargo test
+
+# 3. Formatting check
+cargo fmt --check
+```
 
 ## Key Files to Reference
 

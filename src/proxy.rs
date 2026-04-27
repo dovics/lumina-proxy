@@ -1152,7 +1152,7 @@ pub async fn responses_handler(
                     );
 
                     let body = Body::from_stream(resp.bytes_stream()
-                        .map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))));
+                        .map(|result| result.map_err(std::io::Error::other)));
 
                     (headers, body).into_response()
                 }
