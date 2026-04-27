@@ -42,9 +42,20 @@ fn main() -> Result<()> {
     let server_addr = format!("{}:{}", shared_config.load().server.host, shared_config.load().server.port);
     let server_config = shared_config.clone();
     let server_config_path = config_path.clone();
+
     let server_handle = std::thread::spawn(move || {
+        tracing::info!("Server thread started, creating Tokio runtime...");
+
         // Create a tokio runtime for the server thread
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                tracing::error!("Failed to create Tokio runtime: {}", e);
+                return Err(e.into());
+            }
+        };
+        tracing::info!("Tokio runtime created successfully");
+
         rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx))
     });
 
@@ -54,8 +65,12 @@ fn main() -> Result<()> {
         tracing::warn!("Tray failed to start: {}, running without tray", e);
     }
 
-    // Wait for server to finish
-    server_handle.join().unwrap()?;
+    // Wait for server to finish and log any errors/panics
+    match server_handle.join() {
+        Ok(Err(e)) => tracing::error!("Server exited with error: {}", e),
+        Err(e) => tracing::error!("Server thread panicked: {:?}", e),
+        Ok(Ok(())) => tracing::info!("Server exited successfully"),
+    }
 
     Ok(())
 }
@@ -90,18 +105,24 @@ async fn run_server_with_shared_config(
     config_path: String,
     mut shutdown_rx: mpsc::Receiver<()>,
 ) -> Result<()> {
+    tracing::debug!("Server thread started, initializing server...");
+
     // Get a snapshot of current config for initialization
     let config = shared_config.load();
+    tracing::debug!("Config loaded, building HTTP client...");
 
     // Initialize HTTP client with proxy support
     let client = build_client(&config)?;
+    tracing::debug!("HTTP client built successfully");
 
     // Initialize stats writer if statistics enabled
+    tracing::debug!("Initializing stats writer (enabled: {})", config.statistics.enabled);
     let stats_writer = if config.statistics.enabled {
         Some(StatsWriter::new(&config.statistics).await?)
     } else {
         None
     };
+    tracing::debug!("Stats writer initialized");
 
     // Create proxy state - use the shared config from Windows main thread
     let proxy_state = Arc::new(ProxyState {
