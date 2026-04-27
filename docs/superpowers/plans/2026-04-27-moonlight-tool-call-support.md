@@ -142,7 +142,7 @@ Read `src/proxy.rs` around line 145 (where `aggregate_tool_calls` is defined) to
 /// - `<|tool_call_argument_begin|>` - separates tool ID from arguments
 ///
 /// Tool ID format: `functions.{func_name}:{idx}`
-fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
+pub(crate) fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
     let mut tool_calls = Vec::new();
 
     // Find the tool calls section
@@ -209,7 +209,7 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
     Some(OpenAIToolCall {
         index: Some(index),
         id,
-        type_: Some("function".to_string()),
+        r#type: Some("function".to_string()),  // type is reserved keyword in Rust
         function: OpenAIToolCallFunction {
             name: Some(func_name.to_string()),
             arguments: Some(arguments.to_string()),
@@ -221,7 +221,7 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
 fn generate_random_id() -> String {
     use std::iter;
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::Rng::random_u64(); // Simple random, good enough for IDs
+    let mut rng = rand::Rng::random_u64();
     iter::repeat_with(|| {
         let idx = (rng % CHARSET.len() as u64) as usize;
         rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -307,69 +307,53 @@ match route.provider_type {
 
 - [ ] **Step 3: Add Moonlight branch in the RESPONSE chunk processing match block (second match)**
 
-In the second `match provider_type` block for processing response chunks (around line 590), add a new branch using this code:
+**Note:** Initial implementation assumes each SSE chunk contains complete tool call markers. Split chunk handling requires adding state to the unfold closure - implement as follow-up enhancement if needed.
+
+In the second `match provider_type` block for processing response chunks (around line 590), add:
 
 ```rust
 ProviderType::Moonlight => {
-    // Moonlight accepts OpenAI format, but returns tool calls embedded in content
-    // as special markers that need parsing
+    // Moonlight: parse tool calls from content markers
     match serde_json::from_str::<OpenAIStreamChunk>(data) {
         Ok(mut openai_chunk) => {
             let mut has_content = false;
 
-            // Process each choice
             for choice in &openai_chunk.choices {
-                // Count content tokens
-                if let Some(content) = &choice.delta.content
-                    && !content.is_empty()
-                {
-                    counter.add_delta(content);
-                    has_content = true;
-                }
-
-                // Parse tool calls from content markers
                 if let Some(content) = &choice.delta.content {
-                    let parsed_tool_calls = parse_moonlight_tool_calls(content);
-                    if !parsed_tool_calls.is_empty() {
-                        // We found tool calls in the content
-                        // Add them to the token counter
-                        for tc in &parsed_tool_calls {
-                            if let Some(ref func) = tc.function {
-                                if let Some(ref name) = func.name {
-                                    counter.add_delta(name);
-                                }
-                                if let Some(ref args) = func.arguments {
-                                    counter.add_delta(args);
+                    let content_str = content.as_str();
+
+                    // Check for tool call section markers
+                    if content_str.contains("<|tool_calls_section_begin|>") {
+                        let parsed = parse_moonlight_tool_calls(content_str);
+                        let text_only = strip_moonlight_tool_markers(content_str);
+
+                        if !parsed.is_empty() {
+                            for tc in &parsed {
+                                if let Some(ref f) = tc.function {
+                                    if let Some(ref n) = f.name { counter.add_delta(n); }
+                                    if let Some(ref a) = f.arguments { counter.add_delta(a); }
                                 }
                             }
+                            choice.delta.tool_calls = Some(parsed);
+                            choice.delta.content = if text_only.trim().is_empty() {
+                                None
+                            } else {
+                                Some(text_only)
+                            };
+                            has_content = true;
+                        } else if !text_only.is_empty() {
+                            counter.add_delta(&text_only);
+                            has_content = true;
                         }
+                    } else {
+                        counter.add_delta(content_str);
                         has_content = true;
                     }
                 }
             }
 
-            // If we found tool calls in content, extract them and keep any text before/after markers
-            for choice in &mut openai_chunk.choices {
-                if let Some(content) = &choice.delta.content.clone() {
-                    let parsed_tool_calls = parse_moonlight_tool_calls(&content);
-                    if !parsed_tool_calls.is_empty() {
-                        // Strip tool call markers from content but keep surrounding text
-                        let text_content = strip_moonlight_tool_markers(&content);
-                        if !text_content.trim().is_empty() {
-                            choice.delta.content = Some(text_content);
-                        } else {
-                            choice.delta.content = None;
-                        }
-                        choice.delta.tool_calls = Some(parsed_tool_calls);
-                    }
-                }
-            }
-
             if !has_content {
-                tracing::trace!(
-                    "Moonlight chunk with no countable content: {}",
-                    data.len().min(500)
-                );
+                tracing::trace!("Moonlight chunk: {}", data.len().min(200));
             }
 
             openai_chunk.id = id.clone();
@@ -520,28 +504,19 @@ fn test_parse_moonlight_tool_calls_malformed() {
 }
 ```
 
-**Note:** The tests reference `crate::proxy::parse_moonlight_tool_calls`. Since the function is `pub(crate)`, it will be accessible from tests within the crate.
+**Note:** The tests use `crate::proxy::parse_moonlight_tool_calls` which is `pub(crate)` and accessible from integration tests.
 
-- [ ] **Step 2: Run tests to verify they fail (function not visible or doesn't exist yet)**
-
-Run: `cargo test test_parse_moonlight 2>&1`
-Expected: Test should compile and fail with assertion errors once function is public
-
-- [ ] **Step 3: Make parse_moonlight_tool_calls pub(crate) if needed**
-
-If tests can't access the function, change the function signature from `fn` to `pub(crate) fn`
-
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Run tests to verify they pass**
 
 Run: `cargo test test_parse_moonlight 2>&1`
 Expected: All Moonlight tests pass
 
-- [ ] **Step 5: Run all tests to ensure no regressions**
+- [ ] **Step 3: Run all tests to ensure no regressions**
 
 Run: `cargo test 2>&1`
 Expected: All tests pass
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add tests/conversion_tests.rs src/proxy.rs
@@ -582,11 +557,11 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 
 ## Success Criteria
 
-1. ✅ Moonlight provider type is recognized in configuration
-2. ✅ Streaming responses with tool call markers are correctly parsed
-3. ✅ Tool calls are converted to standard OpenAI format with correct function names and arguments
-4. ✅ Text content surrounding tool call markers is handled (tool calls extracted, text preserved)
-5. ✅ All existing tests continue to pass
-6. ✅ New tests for Moonlight parsing pass
-7. ✅ Clippy passes with `-D warnings`
-8. ✅ Code is properly formatted
+1. Moonlight provider type is recognized in configuration
+2. Streaming responses with tool call markers are correctly parsed
+3. Tool calls are converted to standard OpenAI format with correct function names and arguments
+4. Text content surrounding tool call markers is handled (tool calls extracted, text preserved)
+5. All existing tests continue to pass
+6. New tests for Moonlight parsing pass
+7. Clippy passes with `-D warnings`
+8. Code is properly formatted
