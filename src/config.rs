@@ -31,6 +31,9 @@ pub enum ProviderType {
     /// Google Gemini API
     #[serde(rename = "gemini")]
     Gemini,
+    /// Moonlight (月光) API
+    #[serde(rename = "moonlight")]
+    Moonlight,
     /// OpenAI-compatible API (e.g., vLLM, llama-cpp-python, etc.)
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible,
