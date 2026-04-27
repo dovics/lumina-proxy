@@ -93,7 +93,10 @@ routes:
     assert!(matches!(routes[1].provider_type, ProviderType::Ollama));
     assert!(matches!(routes[2].provider_type, ProviderType::Anthropic));
     assert!(matches!(routes[3].provider_type, ProviderType::Gemini));
-    assert!(matches!(routes[4].provider_type, ProviderType::OpenAiCompatible));
+    assert!(matches!(
+        routes[4].provider_type,
+        ProviderType::OpenAiCompatible
+    ));
 }
 
 #[test]
@@ -207,7 +210,10 @@ routes:
     let config = Config::load_from_file(temp_path).unwrap();
     assert_eq!(config.server.port, 9000);
     assert_eq!(config.server.host, "127.0.0.1");
-    assert_eq!(config.server.auth_token, Some("file-test-token".to_string()));
+    assert_eq!(
+        config.server.auth_token,
+        Some("file-test-token".to_string())
+    );
     assert_eq!(config.routes.len(), 1);
 
     // Clean up

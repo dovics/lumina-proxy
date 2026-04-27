@@ -3,18 +3,21 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use std::sync::Arc;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use axum::Router;
 use axum::routing::{get, post};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use lumina::auth::auth_middleware;
 use lumina::config::Config;
 use lumina::logging::init_logging;
+use lumina::proxy::{
+    ProxyState, get_config_handler, models_handler, proxy_handler, reload_config_handler,
+    responses_handler,
+};
 use lumina::stats::StatsWriter;
-use lumina::proxy::{ProxyState, models_handler, proxy_handler, responses_handler, reload_config_handler, get_config_handler};
-use lumina::auth::auth_middleware;
 
 #[cfg(feature = "tray")]
 use lumina::tray::TrayManager;
@@ -38,7 +41,11 @@ fn main() -> Result<()> {
     let shared_config = Arc::new(ArcSwap::from_pointee(config));
 
     // Spawn Axum server on a background thread
-    let server_addr = format!("{}:{}", shared_config.load().server.host, shared_config.load().server.port);
+    let server_addr = format!(
+        "{}:{}",
+        shared_config.load().server.host,
+        shared_config.load().server.port
+    );
     let server_config = shared_config.clone();
     let server_config_path = config_path.clone();
 
@@ -56,7 +63,11 @@ fn main() -> Result<()> {
         tracing::info!("Tokio runtime created successfully");
 
         // Catch and log any error immediately - don't wait for tray exit
-        let result = rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx));
+        let result = rt.block_on(run_server_with_shared_config(
+            server_config,
+            server_config_path,
+            shutdown_rx,
+        ));
         if let Err(e) = &result {
             tracing::error!("Server failed during initialization/execution: {}", e);
         }
@@ -67,7 +78,8 @@ fn main() -> Result<()> {
     {
         // Run tray on main thread (tray requires main thread)
         tracing::info!("Starting tray on main thread");
-        if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr) {
+        if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr)
+        {
             tracing::warn!("Tray failed to start: {}, running without tray", e);
         }
     }
@@ -145,7 +157,10 @@ async fn run_server_with_shared_config(
     tracing::debug!("HTTP client built successfully");
 
     // Initialize stats writer if statistics enabled
-    tracing::debug!("Initializing stats writer (enabled: {})", config.statistics.enabled);
+    tracing::debug!(
+        "Initializing stats writer (enabled: {})",
+        config.statistics.enabled
+    );
     let stats_writer = if config.statistics.enabled {
         match StatsWriter::new(&config.statistics).await {
             Ok(writer) => {
@@ -180,7 +195,10 @@ async fn run_server_with_shared_config(
 
     // Add authentication middleware if auth token is configured
     if config.server.auth_token.is_some() {
-        router = router.layer(axum::middleware::from_fn_with_state(proxy_state.clone(), auth_middleware));
+        router = router.layer(axum::middleware::from_fn_with_state(
+            proxy_state.clone(),
+            auth_middleware,
+        ));
     }
 
     // Add proxy state to router
@@ -205,4 +223,3 @@ async fn run_server_with_shared_config(
     tracing::info!("Server shutdown complete");
     Ok(())
 }
-

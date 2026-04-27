@@ -1,19 +1,15 @@
 use lumina::convert::{
-    convert_openai_to_ollama, convert_ollama_to_openai,
-    convert_ollama_stream_chunk_to_openai,
-    convert_openai_to_anthropic, convert_anthropic_to_openai,
-    convert_anthropic_stream_chunk_to_openai,
-    convert_openai_to_gemini, convert_gemini_to_openai,
-    convert_gemini_stream_chunk_to_openai,
-    convert_responses_to_chat, convert_chat_to_responses,
-    create_response_created_event,
+    convert_anthropic_stream_chunk_to_openai, convert_anthropic_to_openai,
+    convert_gemini_stream_chunk_to_openai, convert_gemini_to_openai,
+    convert_ollama_stream_chunk_to_openai, convert_ollama_to_openai, convert_openai_to_anthropic,
+    convert_openai_to_gemini, convert_openai_to_ollama,
 };
 use lumina::types::{
-    OpenAIChatRequest, OpenAIChatResponse, OpenAIMessage, OpenAIChoice, OpenAITool, OpenAIToolCall, OpenAIToolCallFunction, OpenAIToolFunction,
-    OllamaChatResponse, OllamaStreamChunk, OllamaDelta, OllamaMessage,
-    AnthropicChatResponse, AnthropicStreamChunk, AnthropicDelta, AnthropicContent, AnthropicUsage,
-    GeminiChatResponse, GeminiStreamChunk, GeminiCandidate, GeminiContent, GeminiPart,
-    GeminiUsageMetadata,
+    AnthropicChatResponse, AnthropicContent, AnthropicDelta, AnthropicStreamChunk, AnthropicUsage,
+    GeminiCandidate, GeminiChatResponse, GeminiContent, GeminiPart, GeminiStreamChunk,
+    GeminiUsageMetadata, OllamaChatResponse, OllamaDelta, OllamaMessage, OllamaStreamChunk,
+    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall,
+    OpenAIToolCallFunction, OpenAIToolFunction,
 };
 
 fn openai_message(role: &str, content: &str) -> OpenAIMessage {
@@ -28,9 +24,7 @@ fn openai_message(role: &str, content: &str) -> OpenAIMessage {
 fn test_openai_to_ollama_conversion() {
     let openai_req = OpenAIChatRequest {
         model: "llama3:8b".to_string(),
-        messages: vec![
-            openai_message("user", "Hello!"),
-        ],
+        messages: vec![openai_message("user", "Hello!")],
         temperature: Some(0.7),
         top_p: Some(0.9),
         max_tokens: Some(100),
@@ -73,11 +67,17 @@ fn test_ollama_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content.as_deref(), Some("Hello! How can I help you today?"));
+    assert_eq!(
+        message.content.as_deref(),
+        Some("Hello! How can I help you today?")
+    );
     assert_eq!(openai_resp.usage.prompt_tokens, 5);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 25);
-    assert_eq!(openai_resp.choices[0].finish_reason, Some("stop".to_string()));
+    assert_eq!(
+        openai_resp.choices[0].finish_reason,
+        Some("stop".to_string())
+    );
 }
 
 #[test]
@@ -94,12 +94,16 @@ fn test_ollama_stream_chunk_to_openai() {
         prompt_eval_count: None,
     };
 
-    let openai_chunk = convert_ollama_stream_chunk_to_openai(&ollama_chunk, "test-id", 12345, "test-model");
+    let openai_chunk =
+        convert_ollama_stream_chunk_to_openai(&ollama_chunk, "test-id", 12345, "test-model");
     assert_eq!(openai_chunk.id, "test-id");
     assert_eq!(openai_chunk.created, 12345);
     assert_eq!(openai_chunk.model, "test-model");
     assert_eq!(openai_chunk.choices.len(), 1);
-    assert_eq!(openai_chunk.choices[0].delta.content, Some("Hello".to_string()));
+    assert_eq!(
+        openai_chunk.choices[0].delta.content,
+        Some("Hello".to_string())
+    );
     assert_eq!(openai_chunk.choices[0].finish_reason, None);
 }
 
@@ -123,14 +127,20 @@ fn test_openai_to_anthropic_conversion() {
 
     let anthropic_req = convert_openai_to_anthropic(&openai_req);
     assert_eq!(anthropic_req.model, "claude-3-opus-20240229");
-    assert_eq!(anthropic_req.system, Some("You are a helpful assistant.".to_string()));
+    assert_eq!(
+        anthropic_req.system,
+        Some("You are a helpful assistant.".to_string())
+    );
     assert_eq!(anthropic_req.messages.len(), 1);
     assert_eq!(anthropic_req.messages[0].role, "user");
     assert_eq!(anthropic_req.messages[0].content, "Hello!");
     assert_eq!(anthropic_req.temperature, Some(0.7));
     assert_eq!(anthropic_req.top_p, Some(0.9));
     assert_eq!(anthropic_req.max_tokens, 1000);
-    assert_eq!(anthropic_req.stop_sequences, Some(vec!["<stop>".to_string()]));
+    assert_eq!(
+        anthropic_req.stop_sequences,
+        Some(vec!["<stop>".to_string()])
+    );
     assert_eq!(anthropic_req.stream, Some(true));
 }
 
@@ -138,9 +148,7 @@ fn test_openai_to_anthropic_conversion() {
 fn test_openai_to_anthropic_no_system_message() {
     let openai_req = OpenAIChatRequest {
         model: "claude-3-sonnet".to_string(),
-        messages: vec![
-            openai_message("user", "Hello!"),
-        ],
+        messages: vec![openai_message("user", "Hello!")],
         max_tokens: Some(500),
         temperature: None,
         top_p: None,
@@ -163,12 +171,10 @@ fn test_anthropic_to_openai_response_conversion() {
     let anthropic_resp = AnthropicChatResponse {
         id: "msg_123".to_string(),
         model: "claude-3-opus-20240229".to_string(),
-        content: vec![
-            AnthropicContent {
-                content_type: "text".to_string(),
-                text: Some("Hello! How can I help you today?".to_string()),
-            }
-        ],
+        content: vec![AnthropicContent {
+            content_type: "text".to_string(),
+            text: Some("Hello! How can I help you today?".to_string()),
+        }],
         usage: AnthropicUsage {
             input_tokens: 10,
             output_tokens: 20,
@@ -183,11 +189,17 @@ fn test_anthropic_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content.as_deref(), Some("Hello! How can I help you today?"));
+    assert_eq!(
+        message.content.as_deref(),
+        Some("Hello! How can I help you today?")
+    );
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 30);
-    assert_eq!(openai_resp.choices[0].finish_reason, Some("stop".to_string()));
+    assert_eq!(
+        openai_resp.choices[0].finish_reason,
+        Some("stop".to_string())
+    );
 }
 
 #[test]
@@ -203,12 +215,16 @@ fn test_anthropic_stream_chunk_to_openai() {
         stop_reason: None,
     };
 
-    let openai_chunk = convert_anthropic_stream_chunk_to_openai(&anthropic_chunk, 12345, "test-model");
+    let openai_chunk =
+        convert_anthropic_stream_chunk_to_openai(&anthropic_chunk, 12345, "test-model");
     assert_eq!(openai_chunk.id, "msg_123");
     assert_eq!(openai_chunk.created, 12345);
     assert_eq!(openai_chunk.model, "test-model");
     assert_eq!(openai_chunk.choices.len(), 1);
-    assert_eq!(openai_chunk.choices[0].delta.content, Some("Hello".to_string()));
+    assert_eq!(
+        openai_chunk.choices[0].delta.content,
+        Some("Hello".to_string())
+    );
 }
 
 #[test]
@@ -233,11 +249,20 @@ fn test_openai_to_gemini_conversion() {
     let gemini_req = convert_openai_to_gemini(&openai_req);
     assert_eq!(gemini_req.contents.len(), 3);
     assert_eq!(gemini_req.contents[0].role, "user");
-    assert_eq!(gemini_req.contents[0].parts[0].text, Some("Hello!".to_string()));
+    assert_eq!(
+        gemini_req.contents[0].parts[0].text,
+        Some("Hello!".to_string())
+    );
     assert_eq!(gemini_req.contents[1].role, "model");
-    assert_eq!(gemini_req.contents[1].parts[0].text, Some("Hi there! How can I help?".to_string()));
+    assert_eq!(
+        gemini_req.contents[1].parts[0].text,
+        Some("Hi there! How can I help?".to_string())
+    );
     assert_eq!(gemini_req.contents[2].role, "user");
-    assert_eq!(gemini_req.contents[2].parts[0].text, Some("Tell me a joke.".to_string()));
+    assert_eq!(
+        gemini_req.contents[2].parts[0].text,
+        Some("Tell me a joke.".to_string())
+    );
 
     assert!(gemini_req.generation_config.is_some());
     let gen_config = gemini_req.generation_config.as_ref().unwrap();
@@ -250,20 +275,18 @@ fn test_openai_to_gemini_conversion() {
 #[test]
 fn test_gemini_to_openai_response_conversion() {
     let gemini_resp = GeminiChatResponse {
-        candidates: vec![
-            GeminiCandidate {
-                content: GeminiContent {
-                    role: "model".to_string(),
-                    parts: vec![
-                        GeminiPart {
-                            text: Some("Why did the chicken cross the road? To get to the other side!".to_string()),
-                            function_response: None,
-                        }
-                    ],
-                },
-                finish_reason: Some("STOP".to_string()),
-            }
-        ],
+        candidates: vec![GeminiCandidate {
+            content: GeminiContent {
+                role: "model".to_string(),
+                parts: vec![GeminiPart {
+                    text: Some(
+                        "Why did the chicken cross the road? To get to the other side!".to_string(),
+                    ),
+                    function_response: None,
+                }],
+            },
+            finish_reason: Some("STOP".to_string()),
+        }],
         usage_metadata: Some(GeminiUsageMetadata {
             prompt_token_count: 10,
             candidates_token_count: 20,
@@ -276,39 +299,45 @@ fn test_gemini_to_openai_response_conversion() {
     assert!(openai_resp.choices[0].message.is_some());
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
-    assert_eq!(message.content.as_deref(), Some("Why did the chicken cross the road? To get to the other side!"));
+    assert_eq!(
+        message.content.as_deref(),
+        Some("Why did the chicken cross the road? To get to the other side!")
+    );
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
     assert_eq!(openai_resp.usage.completion_tokens, 20);
     assert_eq!(openai_resp.usage.total_tokens, 30);
-    assert_eq!(openai_resp.choices[0].finish_reason, Some("stop".to_string()));
+    assert_eq!(
+        openai_resp.choices[0].finish_reason,
+        Some("stop".to_string())
+    );
 }
 
 #[test]
 fn test_gemini_stream_chunk_to_openai() {
     let gemini_chunk = GeminiStreamChunk {
-        candidates: vec![
-            GeminiCandidate {
-                content: GeminiContent {
-                    role: "model".to_string(),
-                    parts: vec![
-                        GeminiPart {
-                            text: Some("Hello".to_string()),
-                            function_response: None,
-                        }
-                    ],
-                },
-                finish_reason: None,
-            }
-        ],
+        candidates: vec![GeminiCandidate {
+            content: GeminiContent {
+                role: "model".to_string(),
+                parts: vec![GeminiPart {
+                    text: Some("Hello".to_string()),
+                    function_response: None,
+                }],
+            },
+            finish_reason: None,
+        }],
         usage_metadata: None,
     };
 
-    let openai_chunk = convert_gemini_stream_chunk_to_openai(&gemini_chunk, "test-id", 12345, "gemini-pro");
+    let openai_chunk =
+        convert_gemini_stream_chunk_to_openai(&gemini_chunk, "test-id", 12345, "gemini-pro");
     assert_eq!(openai_chunk.id, "test-id");
     assert_eq!(openai_chunk.created, 12345);
     assert_eq!(openai_chunk.model, "gemini-pro");
     assert_eq!(openai_chunk.choices.len(), 1);
-    assert_eq!(openai_chunk.choices[0].delta.content, Some("Hello".to_string()));
+    assert_eq!(
+        openai_chunk.choices[0].delta.content,
+        Some("Hello".to_string())
+    );
 }
 
 #[test]
@@ -367,18 +396,16 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
 
 #[test]
 fn test_convert_openai_message_with_tool_to_anthropic() {
-    use lumina::types::*;
     use lumina::convert::convert_openai_to_anthropic;
+    use lumina::types::*;
 
     let req = OpenAIChatRequest {
         model: "claude-3-5-sonnet".to_string(),
-        messages: vec![
-            OpenAIMessage {
-                role: "user".to_string(),
-                content: Some("What's the weather?".to_string()),
-                ..Default::default()
-            },
-        ],
+        messages: vec![OpenAIMessage {
+            role: "user".to_string(),
+            content: Some("What's the weather?".to_string()),
+            ..Default::default()
+        }],
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
@@ -403,18 +430,16 @@ fn test_convert_openai_message_with_tool_to_anthropic() {
 
 #[test]
 fn test_convert_openai_message_with_tool_to_gemini() {
-    use lumina::types::*;
     use lumina::convert::convert_openai_to_gemini;
+    use lumina::types::*;
 
     let req = OpenAIChatRequest {
         model: "gemini-pro".to_string(),
-        messages: vec![
-            OpenAIMessage {
-                role: "user".to_string(),
-                content: Some("What's the weather?".to_string()),
-                ..Default::default()
-            },
-        ],
+        messages: vec![OpenAIMessage {
+            role: "user".to_string(),
+            content: Some("What's the weather?".to_string()),
+            ..Default::default()
+        }],
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
@@ -443,8 +468,8 @@ fn test_convert_openai_message_with_tool_to_gemini() {
 
 #[test]
 fn test_convert_responses_to_chat_with_string_input() {
-    use lumina::types::*;
     use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
 
     let responses_req = ResponsesRequest {
         model: "gpt-4o".to_string(),
@@ -460,7 +485,10 @@ fn test_convert_responses_to_chat_with_string_input() {
     assert_eq!(chat_req.model, "gpt-4o");
     assert_eq!(chat_req.messages.len(), 1);
     assert_eq!(chat_req.messages[0].role, "user");
-    assert_eq!(chat_req.messages[0].content, Some("Hello, how are you?".to_string()));
+    assert_eq!(
+        chat_req.messages[0].content,
+        Some("Hello, how are you?".to_string())
+    );
     assert_eq!(chat_req.temperature, Some(0.7));
     assert_eq!(chat_req.top_p, Some(0.9));
     assert_eq!(chat_req.max_tokens, Some(100));
@@ -469,8 +497,8 @@ fn test_convert_responses_to_chat_with_string_input() {
 
 #[test]
 fn test_convert_responses_to_chat_with_message_array() {
-    use lumina::types::*;
     use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
 
     let responses_req = ResponsesRequest {
         model: "gpt-4o".to_string(),
@@ -499,8 +527,8 @@ fn test_convert_responses_to_chat_with_message_array() {
 
 #[test]
 fn test_convert_chat_to_responses() {
-    use lumina::types::*;
     use lumina::convert::convert_chat_to_responses;
+    use lumina::types::*;
 
     let chat_resp = OpenAIChatResponse {
         id: "chatcmpl-123".to_string(),

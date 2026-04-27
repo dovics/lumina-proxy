@@ -9,7 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Convert an OpenAI-format chat request to Ollama-native format
 pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
-    let messages = req.messages.iter()
+    let messages = req
+        .messages
+        .iter()
         .map(|m| {
             let content = m.content.clone().unwrap_or_default();
             OllamaMessage {
@@ -21,15 +23,17 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
 
     // Convert OpenAI tools to Ollama tools format
     let tools = req.tools.as_ref().map(|tools| {
-        tools.iter().map(|t| OllamaTool {
-            type_: "function".to_string(),
-            function: OllamaToolFunction {
-                name: t.function.name.clone(),
-                description: t.function.description.clone(),
-                parameters: t.function.parameters.clone(),
-            },
-        })
-        .collect()
+        tools
+            .iter()
+            .map(|t| OllamaTool {
+                type_: "function".to_string(),
+                function: OllamaToolFunction {
+                    name: t.function.name.clone(),
+                    description: t.function.description.clone(),
+                    parameters: t.function.parameters.clone(),
+                },
+            })
+            .collect()
     });
 
     OllamaChatRequest {
@@ -45,10 +49,7 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
 }
 
 /// Convert an Ollama-native non-streaming response to OpenAI-format
-pub fn convert_ollama_to_openai(
-    resp: &OllamaChatResponse,
-    model: &str,
-) -> OpenAIChatResponse {
+pub fn convert_ollama_to_openai(resp: &OllamaChatResponse, model: &str) -> OpenAIChatResponse {
     let now = current_timestamp();
 
     OpenAIChatResponse {
@@ -139,12 +140,18 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
 
     // Convert OpenAI tools to Anthropic tools format
     let tools = req.tools.as_ref().map(|tools| {
-        tools.iter().map(|t| AnthropicTool {
-            name: t.function.name.clone(),
-            description: t.function.description.clone(),
-            input_schema: t.function.parameters.clone().unwrap_or(serde_json::json!({})),
-        })
-        .collect()
+        tools
+            .iter()
+            .map(|t| AnthropicTool {
+                name: t.function.name.clone(),
+                description: t.function.description.clone(),
+                input_schema: t
+                    .function
+                    .parameters
+                    .clone()
+                    .unwrap_or(serde_json::json!({})),
+            })
+            .collect()
     });
 
     AnthropicChatRequest {
@@ -166,7 +173,9 @@ pub fn convert_anthropic_to_openai(
     model: &str,
 ) -> OpenAIChatResponse {
     // Concatenate all text content blocks
-    let content = resp.content.iter()
+    let content = resp
+        .content
+        .iter()
         .filter_map(|c| c.text.as_ref())
         .cloned()
         .collect::<Vec<_>>()
@@ -209,7 +218,9 @@ pub fn convert_anthropic_stream_chunk_to_openai(
     model: &str,
 ) -> OpenAIStreamChunk {
     let text = chunk.delta.as_ref().and_then(|d| d.text.clone());
-    let stop_reason = chunk.delta.as_ref()
+    let stop_reason = chunk
+        .delta
+        .as_ref()
         .and_then(|d| d.stop_reason.as_deref())
         .or(chunk.stop_reason.as_deref());
 
@@ -248,7 +259,9 @@ pub fn convert_anthropic_stream_chunk_to_openai(
 
 /// Convert an OpenAI-format chat request to Gemini-native format
 pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
-    let contents = req.messages.iter()
+    let contents = req
+        .messages
+        .iter()
         .map(|m| {
             // Handle tool role messages - convert to function_response parts
             let parts: Vec<GeminiPart> = if m.role == "tool" {
@@ -268,13 +281,21 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
 
             GeminiContent {
                 // Gemini uses "model" instead of "assistant"
-                role: if m.role == "assistant" { "model".to_string() } else { m.role.clone() },
+                role: if m.role == "assistant" {
+                    "model".to_string()
+                } else {
+                    m.role.clone()
+                },
                 parts,
             }
         })
         .collect();
 
-    let generation_config = if req.temperature.is_some() || req.top_p.is_some() || req.max_tokens.is_some() || req.stop.is_some() {
+    let generation_config = if req.temperature.is_some()
+        || req.top_p.is_some()
+        || req.max_tokens.is_some()
+        || req.stop.is_some()
+    {
         Some(GeminiGenerationConfig {
             temperature: req.temperature,
             top_p: req.top_p,
@@ -287,14 +308,16 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
 
     // Convert OpenAI tools to Gemini tools format
     let tools = req.tools.as_ref().map(|tools| {
-        tools.iter().map(|t| GeminiTool {
-            function_declarations: vec![GeminiFunctionDeclaration {
-                name: t.function.name.clone(),
-                description: t.function.description.clone(),
-                parameters: t.function.parameters.clone(),
-            }],
-        })
-        .collect()
+        tools
+            .iter()
+            .map(|t| GeminiTool {
+                function_declarations: vec![GeminiFunctionDeclaration {
+                    name: t.function.name.clone(),
+                    description: t.function.description.clone(),
+                    parameters: t.function.parameters.clone(),
+                }],
+            })
+            .collect()
     });
 
     GeminiChatRequest {
@@ -310,14 +333,23 @@ pub fn convert_gemini_to_openai(
     model: &str,
     created: u64,
 ) -> OpenAIChatResponse {
-    let now = if created == 0 { current_timestamp() } else { created };
+    let now = if created == 0 {
+        current_timestamp()
+    } else {
+        created
+    };
     let id = format!("gemini-{}", now);
 
-    let choices = resp.candidates.iter()
+    let choices = resp
+        .candidates
+        .iter()
         .enumerate()
         .map(|(idx, candidate)| {
             // Concatenate all text parts
-            let content = candidate.content.parts.iter()
+            let content = candidate
+                .content
+                .parts
+                .iter()
                 .filter_map(|p| p.text.as_ref())
                 .cloned()
                 .collect::<Vec<_>>()
@@ -369,10 +401,15 @@ pub fn convert_gemini_stream_chunk_to_openai(
     created: u64,
     model: &str,
 ) -> OpenAIStreamChunk {
-    let choices = chunk.candidates.iter()
+    let choices = chunk
+        .candidates
+        .iter()
         .enumerate()
         .map(|(idx, candidate)| {
-            let content = candidate.content.parts.iter()
+            let content = candidate
+                .content
+                .parts
+                .iter()
                 .filter_map(|p| p.text.as_ref())
                 .cloned()
                 .collect::<Vec<_>>()
@@ -393,7 +430,11 @@ pub fn convert_gemini_stream_chunk_to_openai(
                     } else {
                         None
                     },
-                    content: if content.is_empty() { None } else { Some(content) },
+                    content: if content.is_empty() {
+                        None
+                    } else {
+                        Some(content)
+                    },
                     ..Default::default()
                 },
                 finish_reason,
@@ -454,17 +495,20 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
 }
 
 /// Convert a Chat Completions response to Responses API format
-pub fn convert_chat_to_responses(
-    resp: &OpenAIChatResponse,
-    created_at: i64,
-) -> ResponsesResponse {
+pub fn convert_chat_to_responses(resp: &OpenAIChatResponse, created_at: i64) -> ResponsesResponse {
     // Extract message content from first choice
-    let (content_text, finish_reason) = resp.choices.first().map(|choice| {
-        let text = choice.message.as_ref()
-            .and_then(|m| m.content.clone())
-            .unwrap_or_default();
-        (text, choice.finish_reason.clone())
-    }).unwrap_or_default();
+    let (content_text, finish_reason) = resp
+        .choices
+        .first()
+        .map(|choice| {
+            let text = choice
+                .message
+                .as_ref()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default();
+            (text, choice.finish_reason.clone())
+        })
+        .unwrap_or_default();
 
     // Determine status based on finish_reason
     let status = match finish_reason.as_deref() {

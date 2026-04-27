@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::types::OpenAIChatRequest;
-use tiktoken_rs::{get_bpe_from_model, cl100k_base, CoreBPE};
+use tiktoken_rs::{CoreBPE, cl100k_base, get_bpe_from_model};
 
 lazy_static::lazy_static! {
     /// Static reference to the default cl100k_base tokenizer (used by all modern OpenAI models)
@@ -15,8 +15,7 @@ lazy_static::lazy_static! {
 /// Uses the appropriate tokenizer for the model, or defaults to `cl100k_base`
 /// (good approximation for most models) if the model isn't recognized.
 pub fn count_prompt_tokens(req: &OpenAIChatRequest) -> usize {
-    let tokenizer = get_bpe_from_model(&req.model)
-        .unwrap_or_else(|_| DEFAULT_TOKENIZER.clone());
+    let tokenizer = get_bpe_from_model(&req.model).unwrap_or_else(|_| DEFAULT_TOKENIZER.clone());
 
     let mut total_tokens = 0;
 
@@ -77,9 +76,7 @@ mod tests {
     fn test_count_prompt_tokens_simple() {
         let req = OpenAIChatRequest {
             model: "gpt-4o".to_string(),
-            messages: vec![
-                openai_message("user", "Hello world"),
-            ],
+            messages: vec![openai_message("user", "Hello world")],
             ..Default::default()
         };
 
@@ -111,9 +108,7 @@ mod tests {
     fn test_count_prompt_tokens_unknown_model() {
         let req = OpenAIChatRequest {
             model: "unknown-model-123".to_string(),
-            messages: vec![
-                openai_message("user", "Hello world"),
-            ],
+            messages: vec![openai_message("user", "Hello world")],
             ..Default::default()
         };
 

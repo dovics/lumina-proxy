@@ -4,10 +4,10 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::time::{Duration, Instant};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
+use tokio::time::{Duration, Instant};
 
 use crate::config::StatisticsConfig;
 use crate::types::ProxyError;
@@ -67,8 +67,9 @@ impl StatsWriter {
             });
         }
 
-        let stats_file = config.stats_file.as_ref()
-            .ok_or_else(|| ProxyError::ConfigError("Statistics enabled but stats_file not provided".to_string()))?;
+        let stats_file = config.stats_file.as_ref().ok_or_else(|| {
+            ProxyError::ConfigError("Statistics enabled but stats_file not provided".to_string())
+        })?;
 
         let interval_secs = config.aggregation_interval_secs.unwrap_or(60);
 

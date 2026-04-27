@@ -1,3 +1,4 @@
+use crate::proxy::ProxyState;
 use axum::{
     body::Body,
     extract::State,
@@ -6,7 +7,6 @@ use axum::{
     response::Response,
 };
 use std::sync::Arc;
-use crate::proxy::ProxyState;
 
 /// Authentication middleware that validates Bearer tokens
 /// If no auth token is configured in the config, all requests are allowed
@@ -22,12 +22,13 @@ pub async fn auth_middleware(
     };
 
     // Extract the Authorization header
-    let auth_header = req.headers().get(axum::http::header::AUTHORIZATION)
+    let auth_header = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     // Parse as a Bearer token
-    let auth_str = auth_header.to_str()
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let auth_str = auth_header.to_str().map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     if !auth_str.starts_with("Bearer ") {
         return Err(StatusCode::UNAUTHORIZED);

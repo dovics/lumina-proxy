@@ -1,22 +1,22 @@
 //! Core proxy implementation - handles request routing, conversion, and streaming
 
+use crate::config::{Config, ProviderType, RouteConfig};
+use crate::convert::*;
+use crate::stats::{RequestMetrics, StatsWriter};
+use crate::token_counter::*;
+use crate::types::*;
 use arc_swap::ArcSwap;
+use axum::response::Json as AxumJson;
 use axum::{
-    body::{Bytes, Body},
+    Json,
+    body::{Body, Bytes},
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
-use axum::response::Json as AxumJson;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
-use crate::config::{Config, ProviderType, RouteConfig};
-use crate::types::*;
-use crate::convert::*;
-use crate::token_counter::*;
-use crate::stats::{StatsWriter, RequestMetrics};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 
@@ -54,29 +54,32 @@ pub fn build_backend_url_for_endpoint(
 ) -> Result<String, ProxyError> {
     match route.provider_type {
         ProviderType::Ollama => {
-            let base_url = route.base_url
-                .as_ref()
-                .ok_or_else(|| ProxyError::ConfigError(
-                    format!("Ollama route for model '{}' missing base_url", model)
-                ))?;
+            let base_url = route.base_url.as_ref().ok_or_else(|| {
+                ProxyError::ConfigError(format!(
+                    "Ollama route for model '{}' missing base_url",
+                    model
+                ))
+            })?;
             Ok(format!("{}/api/chat", base_url.trim_end_matches('/')))
         }
 
         ProviderType::Anthropic => {
-            let base_url = route.base_url
-                .as_ref()
-                .ok_or_else(|| ProxyError::ConfigError(
-                    format!("Anthropic route for model '{}' missing base_url", model)
-                ))?;
+            let base_url = route.base_url.as_ref().ok_or_else(|| {
+                ProxyError::ConfigError(format!(
+                    "Anthropic route for model '{}' missing base_url",
+                    model
+                ))
+            })?;
             Ok(format!("{}/v1/messages", base_url.trim_end_matches('/')))
         }
 
         ProviderType::Gemini => {
-            let base_url = route.base_url
-                .as_ref()
-                .ok_or_else(|| ProxyError::ConfigError(
-                    format!("Gemini route for model '{}' missing base_url", model)
-                ))?;
+            let base_url = route.base_url.as_ref().ok_or_else(|| {
+                ProxyError::ConfigError(format!(
+                    "Gemini route for model '{}' missing base_url",
+                    model
+                ))
+            })?;
             Ok(format!(
                 "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
                 base_url.trim_end_matches('/'),
@@ -96,9 +99,10 @@ pub fn build_backend_url_for_endpoint(
                 };
                 Ok(format!("{}{}", base_url.trim_end_matches('/'), endpoint))
             } else {
-                Err(ProxyError::ConfigError(
-                    format!("OpenAI route for model '{}' missing either url or base_url", model)
-                ))
+                Err(ProxyError::ConfigError(format!(
+                    "OpenAI route for model '{}' missing either url or base_url",
+                    model
+                )))
             }
         }
 
@@ -112,18 +116,20 @@ pub fn build_backend_url_for_endpoint(
                     // Fall back to chat completions if only url is provided
                     Ok(url.clone())
                 } else {
-                    route.url
-                        .clone()
-                        .ok_or_else(|| ProxyError::ConfigError(
-                            format!("OpenAI-compatible route for model '{}' missing url", model)
+                    route.url.clone().ok_or_else(|| {
+                        ProxyError::ConfigError(format!(
+                            "OpenAI-compatible route for model '{}' missing url",
+                            model
                         ))
+                    })
                 }
             } else {
-                route.url
-                    .clone()
-                    .ok_or_else(|| ProxyError::ConfigError(
-                        format!("OpenAI-compatible route for model '{}' missing url", model)
+                route.url.clone().ok_or_else(|| {
+                    ProxyError::ConfigError(format!(
+                        "OpenAI-compatible route for model '{}' missing url",
+                        model
                     ))
+                })
             }
         }
     }
@@ -135,9 +141,7 @@ pub fn build_backend_url_for_endpoint(
 
 /// Aggregates streaming tool_call chunks into a complete tool_call
 /// Tool calls come in pieces: id, function.name, function.arguments across multiple chunks
-fn aggregate_tool_calls(
-    tool_calls: &[OpenAIToolCall],
-) -> Vec<OpenAIToolCall> {
+fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
     use std::collections::HashMap;
 
     let mut aggregated: HashMap<u32, OpenAIToolCall> = HashMap::new();
@@ -162,9 +166,8 @@ fn aggregate_tool_calls(
             if func.arguments.is_some() {
                 // Concatenate arguments (they come in pieces)
                 let new_arg = func.arguments.clone().unwrap_or_default();
-                func_entry.arguments = Some(
-                    func_entry.arguments.clone().unwrap_or_default() + &new_arg
-                );
+                func_entry.arguments =
+                    Some(func_entry.arguments.clone().unwrap_or_default() + &new_arg);
             }
         }
 
@@ -211,28 +214,38 @@ async fn handle_non_streaming(
     // Convert request body based on provider
     let body = match route.provider_type {
         ProviderType::Ollama => serde_json::to_vec(&convert_openai_to_ollama(&outgoing_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Ollama request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Ollama request: {}", e) })),
+                )
+            }),
 
         ProviderType::Anthropic => serde_json::to_vec(&convert_openai_to_anthropic(&outgoing_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Anthropic request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(
+                        json!({ "error": format!("Failed to serialize Anthropic request: {}", e) }),
+                    ),
+                )
+            }),
 
         ProviderType::Gemini => serde_json::to_vec(&convert_openai_to_gemini(&outgoing_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Gemini request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Gemini request: {}", e) })),
+                )
+            }),
 
         ProviderType::OpenAi | ProviderType::OpenAiCompatible => serde_json::to_vec(&outgoing_req)
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) })),
+                )
+            }),
     };
 
     let body = match body {
@@ -241,57 +254,55 @@ async fn handle_non_streaming(
     };
 
     // Send the request
-    let response = request_builder
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| (
+    let response = request_builder.body(body).send().await.map_err(|e| {
+        (
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": format!("Backend request failed: {}", e) }))
-        ))?;
+            Json(json!({ "error": format!("Backend request failed: {}", e) })),
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
         return Err((
             status,
-            Json(json!({ "error": format!("Backend returned error: {}", error_text) }))
+            Json(json!({ "error": format!("Backend returned error: {}", error_text) })),
         ));
     }
 
     // Get completion tokens based on provider
     let (openai_resp, completion_tokens) = match route.provider_type {
         ProviderType::Ollama => {
-            let ollama_resp: OllamaChatResponse = response.json()
-                .await
-                .map_err(|e| (
+            let ollama_resp: OllamaChatResponse = response.json().await.map_err(|e| {
+                (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Failed to parse Ollama response: {}", e) }))
-                ))?;
+                    Json(json!({ "error": format!("Failed to parse Ollama response: {}", e) })),
+                )
+            })?;
             let resp = convert_ollama_to_openai(&ollama_resp, &model);
             let tokens = resp.usage.completion_tokens as usize;
             (resp, tokens)
         }
 
         ProviderType::Anthropic => {
-            let anthropic_resp: AnthropicChatResponse = response.json()
-                .await
-                .map_err(|e| (
+            let anthropic_resp: AnthropicChatResponse = response.json().await.map_err(|e| {
+                (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Failed to parse Anthropic response: {}", e) }))
-                ))?;
+                    Json(json!({ "error": format!("Failed to parse Anthropic response: {}", e) })),
+                )
+            })?;
             let resp = convert_anthropic_to_openai(&anthropic_resp, &model);
             let tokens = resp.usage.completion_tokens as usize;
             (resp, tokens)
         }
 
         ProviderType::Gemini => {
-            let gemini_resp: GeminiChatResponse = response.json()
-                .await
-                .map_err(|e| (
+            let gemini_resp: GeminiChatResponse = response.json().await.map_err(|e| {
+                (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Failed to parse Gemini response: {}", e) }))
-                ))?;
+                    Json(json!({ "error": format!("Failed to parse Gemini response: {}", e) })),
+                )
+            })?;
             let created = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -312,8 +323,8 @@ async fn handle_non_streaming(
                 "Received upstream response body"
             );
 
-            let mut openai_resp: OpenAIChatResponse = serde_json::from_str(&body_text)
-                .map_err(|e| {
+            let mut openai_resp: OpenAIChatResponse =
+                serde_json::from_str(&body_text).map_err(|e| {
                     tracing::warn!(
                         status = %status,
                         provider = ?route.provider_type,
@@ -322,7 +333,7 @@ async fn handle_non_streaming(
                     );
                     (
                         StatusCode::BAD_GATEWAY,
-                        Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) }))
+                        Json(json!({ "error": format!("Failed to parse OpenAI response: {}", e) })),
                     )
                 })?;
             let tokens = openai_resp.usage.completion_tokens as usize;
@@ -375,7 +386,8 @@ async fn handle_non_streaming(
             );
         }
         if let Some(msg) = &choice.message
-            && (msg.content.is_none() || msg.content.as_ref().map(|c| c.is_empty()).unwrap_or(false))
+            && (msg.content.is_none()
+                || msg.content.as_ref().map(|c| c.is_empty()).unwrap_or(false))
         {
             tracing::warn!(
                 model = %openai_resp.model,
@@ -420,28 +432,38 @@ async fn handle_streaming(
 
     let body = match route.provider_type {
         ProviderType::Ollama => serde_json::to_vec(&convert_openai_to_ollama(&streaming_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Ollama request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Ollama request: {}", e) })),
+                )
+            }),
 
         ProviderType::Anthropic => serde_json::to_vec(&convert_openai_to_anthropic(&streaming_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Anthropic request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(
+                        json!({ "error": format!("Failed to serialize Anthropic request: {}", e) }),
+                    ),
+                )
+            }),
 
         ProviderType::Gemini => serde_json::to_vec(&convert_openai_to_gemini(&streaming_req))
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize Gemini request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize Gemini request: {}", e) })),
+                )
+            }),
 
         ProviderType::OpenAi | ProviderType::OpenAiCompatible => serde_json::to_vec(&streaming_req)
-            .map_err(|e| (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) }))
-            )),
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) })),
+                )
+            }),
     };
 
     let body = match body {
@@ -460,21 +482,19 @@ async fn handle_streaming(
     // Some providers require specific headers for SSE
     request_builder = request_builder.header("Accept", "text/event-stream");
 
-    let response = request_builder
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| (
+    let response = request_builder.body(body).send().await.map_err(|e| {
+        (
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": format!("Backend request failed: {}", e) }))
-        ))?;
+            Json(json!({ "error": format!("Backend request failed: {}", e) })),
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
         return Err((
             status,
-            Json(json!({ "error": format!("Backend returned error: {}", error_text) }))
+            Json(json!({ "error": format!("Backend returned error: {}", error_text) })),
         ));
     }
 
@@ -523,7 +543,16 @@ async fn handle_streaming(
     let prompt_tokens_stream = prompt_tokens;
     let transformed_stream = futures_util::stream::unfold(
         initial_state,
-        move |(mut bytes_stream, counter, id, created, model, mut buffer, first_bytes_time, is_first_chunk)| async move {
+        move |(
+            mut bytes_stream,
+            counter,
+            id,
+            created,
+            model,
+            mut buffer,
+            first_bytes_time,
+            is_first_chunk,
+        )| async move {
             let provider_type = provider_type;
 
             // Continuously read and process until we have at least one chunk to yield,
@@ -533,7 +562,7 @@ async fn handle_streaming(
                 let mut yielded_chunks = Vec::new();
                 while let Some(pos) = buffer.find('\n') {
                     let line = buffer[0..pos].trim().to_string();
-                    buffer = buffer[pos+1..].to_string();
+                    buffer = buffer[pos + 1..].to_string();
 
                     if line.is_empty() || !line.starts_with("data: ") {
                         continue;
@@ -543,7 +572,14 @@ async fn handle_streaming(
 
                     // Log every non-DONE chunk for debugging
                     if data.trim() != "[DONE]" {
-                        tracing::trace!("Received SSE chunk: {}", if data.len() < 500 { data } else { "<chunk too long>" });
+                        tracing::trace!(
+                            "Received SSE chunk: {}",
+                            if data.len() < 500 {
+                                data
+                            } else {
+                                "<chunk too long>"
+                            }
+                        );
                     }
 
                     // Skip [DONE] message for now, we'll add it at the end
@@ -552,7 +588,8 @@ async fn handle_streaming(
                     }
 
                     // Parse and convert chunk based on provider
-                    let openai_chunk_result: Result<OpenAIStreamChunk, String> = match provider_type {
+                    let openai_chunk_result: Result<OpenAIStreamChunk, String> = match provider_type
+                    {
                         ProviderType::Ollama => {
                             match serde_json::from_str::<OllamaStreamChunk>(data) {
                                 Ok(ollama_chunk) => {
@@ -564,7 +601,7 @@ async fn handle_streaming(
                                         &ollama_chunk,
                                         &id,
                                         created,
-                                        &model
+                                        &model,
                                     ))
                                 }
                                 Err(e) => {
@@ -576,13 +613,15 @@ async fn handle_streaming(
                         ProviderType::Anthropic => {
                             match serde_json::from_str::<AnthropicStreamChunk>(data) {
                                 Ok(anthropic_chunk) => {
-                                    if let Some(delta) = &anthropic_chunk.delta && let Some(text) = &delta.text {
+                                    if let Some(delta) = &anthropic_chunk.delta
+                                        && let Some(text) = &delta.text
+                                    {
                                         counter.add_delta(text);
                                     }
                                     Ok(convert_anthropic_stream_chunk_to_openai(
                                         &anthropic_chunk,
                                         created,
-                                        &model
+                                        &model,
                                     ))
                                 }
                                 Err(e) => {
@@ -607,7 +646,7 @@ async fn handle_streaming(
                                         &gemini_chunk,
                                         &id,
                                         created,
-                                        &model
+                                        &model,
                                     ))
                                 }
                                 Err(e) => {
@@ -633,13 +672,15 @@ async fn handle_streaming(
                                     for choice in &openai_chunk.choices {
                                         // Count content tokens
                                         if let Some(content) = &choice.delta.content
-                                            && !content.is_empty() {
+                                            && !content.is_empty()
+                                        {
                                             counter.add_delta(content);
                                             has_content = true;
                                         }
                                         // Also count reasoning tokens (for Kimi/OpenRouter deepseek reasoning)
                                         if let Some(reasoning) = &choice.delta.reasoning
-                                            && !reasoning.is_empty() {
+                                            && !reasoning.is_empty()
+                                        {
                                             counter.add_delta(reasoning);
                                             has_content = true;
                                         }
@@ -648,12 +689,14 @@ async fn handle_streaming(
                                             for tool_call in tool_calls {
                                                 if let Some(function) = &tool_call.function {
                                                     if let Some(name) = &function.name
-                                                        && !name.is_empty() {
+                                                        && !name.is_empty()
+                                                    {
                                                         counter.add_delta(name);
                                                         has_content = true;
                                                     }
                                                     if let Some(arguments) = &function.arguments
-                                                        && !arguments.is_empty() {
+                                                        && !arguments.is_empty()
+                                                    {
                                                         counter.add_delta(arguments);
                                                         has_content = true;
                                                     }
@@ -676,7 +719,8 @@ async fn handle_streaming(
                                     if !has_content {
                                         tracing::trace!(
                                             "Chunk parsed but no countable content: {}",
-                                            serde_json::to_string(&raw_value).unwrap_or_else(|_| data.to_string())
+                                            serde_json::to_string(&raw_value)
+                                                .unwrap_or_else(|_| data.to_string())
                                         );
                                     }
 
@@ -691,7 +735,11 @@ async fn handle_streaming(
                                     tracing::debug!(
                                         "Failed to parse OpenAI stream chunk: {}, raw data: {}",
                                         e,
-                                        if data.len() < 1000 { data } else { "data too long, see trace" }
+                                        if data.len() < 1000 {
+                                            data
+                                        } else {
+                                            "data too long, see trace"
+                                        }
                                     );
                                     Err(format!("Failed to parse OpenAI stream chunk: {}", e))
                                 }
@@ -711,7 +759,9 @@ async fn handle_streaming(
                             }
 
                             // Trace log each streaming chunk
-                            let first_delta = chunk.choices.first()
+                            let first_delta = chunk
+                                .choices
+                                .first()
                                 .and_then(|c| c.delta.content.clone())
                                 .unwrap_or_default();
                             tracing::trace!(
@@ -722,7 +772,8 @@ async fn handle_streaming(
                             );
 
                             // Format as SSE
-                            let sse_line = format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
+                            let sse_line =
+                                format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap());
                             yielded_chunks.push(Ok(Bytes::from(sse_line)));
                         }
                         Err(e) => {
@@ -740,7 +791,10 @@ async fn handle_streaming(
                                 }],
                                 "warning": e
                             });
-                            let sse_line = format!("data: {}\n\n", serde_json::to_string(&error_chunk).unwrap());
+                            let sse_line = format!(
+                                "data: {}\n\n",
+                                serde_json::to_string(&error_chunk).unwrap()
+                            );
                             yielded_chunks.push(Ok(Bytes::from(sse_line)));
                         }
                     }
@@ -754,7 +808,19 @@ async fn handle_streaming(
                         let s = String::from_utf8_lossy(bytes.as_ref());
                         buffer = s.to_string() + &buffer;
                     }
-                    return Some((next_chunk, (bytes_stream, counter, id, created, model, buffer, first_bytes_time, false)));
+                    return Some((
+                        next_chunk,
+                        (
+                            bytes_stream,
+                            counter,
+                            id,
+                            created,
+                            model,
+                            buffer,
+                            first_bytes_time,
+                            false,
+                        ),
+                    ));
                 }
 
                 // No chunks ready yet - need to read more data from backend
@@ -764,13 +830,20 @@ async fn handle_streaming(
                             Ok(b) => b,
                             Err(e) => {
                                 tracing::error!("Stream error: {}", e);
-                                let error_chunk: Result<Bytes, reqwest::Error> = Ok(Bytes::from(format!(
-                                    "data: {{\"error\": \"{}\"}}\n\n",
-                                    e
-                                )));
+                                let error_chunk: Result<Bytes, reqwest::Error> =
+                                    Ok(Bytes::from(format!("data: {{\"error\": \"{}\"}}\n\n", e)));
                                 return Some((
                                     error_chunk,
-                                    (bytes_stream, counter, id, created, model, buffer, first_bytes_time, false)
+                                    (
+                                        bytes_stream,
+                                        counter,
+                                        id,
+                                        created,
+                                        model,
+                                        buffer,
+                                        first_bytes_time,
+                                        false,
+                                    ),
                                 ));
                             }
                         };
@@ -807,11 +880,10 @@ async fn handle_streaming(
                     }
                 }
             }
-        }
+        },
     );
 
     // The stream is already okay because Box::pin gives Unpin
-
 
     // After stream completes, write statistics
     // Pin the transformed stream so we can safely poll it
@@ -831,9 +903,20 @@ async fn handle_streaming(
             token_counter_clone,
             first_bytes_time,
             false,
-            0 // chunk counter - detect if we got any valid chunks
+            0, // chunk counter - detect if we got any valid chunks
         ),
-        |(mut stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, done, chunk_count)| async move {
+        |(
+            mut stream,
+            stats_writer,
+            model,
+            provider_type,
+            prompt_tokens,
+            start_time,
+            token_counter_clone,
+            first_bytes_time,
+            done,
+            chunk_count,
+        )| async move {
             if done {
                 return None;
             }
@@ -843,8 +926,22 @@ async fn handle_streaming(
             match stream.next().await {
                 Some(item) => {
                     // Got a valid chunk, increment counter
-                    Some((item, (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, false, chunk_count + 1)))
-                },
+                    Some((
+                        item,
+                        (
+                            stream,
+                            stats_writer,
+                            model,
+                            provider_type,
+                            prompt_tokens,
+                            start_time,
+                            token_counter_clone,
+                            first_bytes_time,
+                            false,
+                            chunk_count + 1,
+                        ),
+                    ))
+                }
                 None => {
                     // Stream is complete, check if we got any valid chunks
                     let completion_tokens = token_counter_clone.total();
@@ -894,7 +991,8 @@ async fn handle_streaming(
                             }]
                         });
 
-                        let error_sse = format!("data: {}\n\n", serde_json::to_string(&error_chunk).unwrap());
+                        let error_sse =
+                            format!("data: {}\n\n", serde_json::to_string(&error_chunk).unwrap());
 
                         // Write stats with error status
                         if let Some(stats_writer) = stats_writer.as_ref() {
@@ -916,7 +1014,18 @@ async fn handle_streaming(
                         // Send error chunk first, then [DONE]
                         return Some((
                             Ok(Bytes::from(error_sse)),
-                            (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, true, chunk_count)
+                            (
+                                stream,
+                                stats_writer,
+                                model,
+                                provider_type,
+                                prompt_tokens,
+                                start_time,
+                                token_counter_clone,
+                                first_bytes_time,
+                                true,
+                                chunk_count,
+                            ),
                         ));
                     }
 
@@ -960,28 +1069,30 @@ async fn handle_streaming(
                     // Send final [DONE]
                     Some((
                         Ok(Bytes::from("data: [DONE]\n\n")),
-                        (stream, stats_writer, model, provider_type, prompt_tokens, start_time, token_counter_clone, first_bytes_time, true, chunk_count)
+                        (
+                            stream,
+                            stats_writer,
+                            model,
+                            provider_type,
+                            prompt_tokens,
+                            start_time,
+                            token_counter_clone,
+                            first_bytes_time,
+                            true,
+                            chunk_count,
+                        ),
                     ))
                 }
             }
-        }
+        },
     );
 
     let body = Body::from_stream(final_stream);
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "Content-Type",
-        "text/event-stream".parse().unwrap()
-    );
-    headers.insert(
-        "Cache-Control",
-        "no-cache".parse().unwrap()
-    );
-    headers.insert(
-        "Connection",
-        "keep-alive".parse().unwrap()
-    );
+    headers.insert("Content-Type", "text/event-stream".parse().unwrap());
+    headers.insert("Cache-Control", "no-cache".parse().unwrap());
+    headers.insert("Connection", "keep-alive".parse().unwrap());
 
     Ok((headers, body).into_response())
 }
@@ -999,8 +1110,9 @@ pub async fn proxy_handler(
     if bytes.len() > 100 * 1024 * 1024 {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
-            Json(json!({ "error": "Request too large, maximum 100MB allowed" }))
-        ).into_response();
+            Json(json!({ "error": "Request too large, maximum 100MB allowed" })),
+        )
+            .into_response();
     }
     // Parse OpenAI request from body
     let req: OpenAIChatRequest = match serde_json::from_slice(&bytes) {
@@ -1008,8 +1120,9 @@ pub async fn proxy_handler(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": format!("Invalid request body: {}", e) }))
-            ).into_response();
+                Json(json!({ "error": format!("Invalid request body: {}", e) })),
+            )
+                .into_response();
         }
     };
 
@@ -1028,8 +1141,9 @@ pub async fn proxy_handler(
     let Some(route) = config.find_backend_for_model(&model) else {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("No backend route configured for model: {}", model) }))
-        ).into_response();
+            Json(json!({ "error": format!("No backend route configured for model: {}", model) })),
+        )
+            .into_response();
     };
 
     // Build backend URL
@@ -1038,8 +1152,9 @@ pub async fn proxy_handler(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() }))
-            ).into_response();
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
         }
     };
 
@@ -1068,8 +1183,9 @@ pub async fn responses_handler(
     if bytes.len() > 100 * 1024 * 1024 {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
-            Json(json!({ "error": "Request too large, maximum 100MB allowed" }))
-        ).into_response();
+            Json(json!({ "error": "Request too large, maximum 100MB allowed" })),
+        )
+            .into_response();
     }
 
     // Parse Responses API request from body
@@ -1078,8 +1194,9 @@ pub async fn responses_handler(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": format!("Invalid request body: {}", e) }))
-            ).into_response();
+                Json(json!({ "error": format!("Invalid request body: {}", e) })),
+            )
+                .into_response();
         }
     };
 
@@ -1096,8 +1213,9 @@ pub async fn responses_handler(
     let Some(route) = config.find_backend_for_model(&model) else {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("No backend route configured for model: {}", model) }))
-        ).into_response();
+            Json(json!({ "error": format!("No backend route configured for model: {}", model) })),
+        )
+            .into_response();
     };
 
     // Determine if we should use native Responses API or convert to Chat Completions
@@ -1116,43 +1234,35 @@ pub async fn responses_handler(
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() }))
-                ).into_response();
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response();
             }
         };
 
         // Use the raw request body for passthrough
         let mut request_builder = state.client.post(backend_url);
         if let Some(api_key) = &route.api_key {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", api_key));
         }
         request_builder = request_builder.header("Content-Type", "application/json");
 
         if is_streaming {
             // Streaming passthrough
-            let response = request_builder
-                .body(bytes.to_vec())
-                .send()
-                .await;
+            let response = request_builder.body(bytes.to_vec()).send().await;
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
                     let mut headers = HeaderMap::new();
-                    headers.insert(
-                        "Content-Type",
-                        "text/event-stream".parse().unwrap()
-                    );
-                    headers.insert(
-                        "Cache-Control",
-                        "no-cache".parse().unwrap()
-                    );
-                    headers.insert(
-                        "Connection",
-                        "keep-alive".parse().unwrap()
-                    );
+                    headers.insert("Content-Type", "text/event-stream".parse().unwrap());
+                    headers.insert("Cache-Control", "no-cache".parse().unwrap());
+                    headers.insert("Connection", "keep-alive".parse().unwrap());
 
-                    let body = Body::from_stream(resp.bytes_stream()
-                        .map(|result| result.map_err(std::io::Error::other)));
+                    let body = Body::from_stream(
+                        resp.bytes_stream()
+                            .map(|result| result.map_err(std::io::Error::other)),
+                    );
 
                     (headers, body).into_response()
                 }
@@ -1163,15 +1273,13 @@ pub async fn responses_handler(
                 }
                 Err(e) => (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Backend request failed: {}", e) }))
-                ).into_response(),
+                    Json(json!({ "error": format!("Backend request failed: {}", e) })),
+                )
+                    .into_response(),
             }
         } else {
             // Non-streaming passthrough
-            let response = request_builder
-                .body(bytes.to_vec())
-                .send()
-                .await;
+            let response = request_builder.body(bytes.to_vec()).send().await;
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
@@ -1190,8 +1298,9 @@ pub async fn responses_handler(
                 }
                 Err(e) => (
                     StatusCode::BAD_GATEWAY,
-                    Json(json!({ "error": format!("Backend request failed: {}", e) }))
-                ).into_response(),
+                    Json(json!({ "error": format!("Backend request failed: {}", e) })),
+                )
+                    .into_response(),
             }
         }
     } else {
@@ -1201,8 +1310,9 @@ pub async fn responses_handler(
             Err(e) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() }))
-                ).into_response();
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response();
             }
         };
 
@@ -1235,20 +1345,21 @@ pub async fn responses_handler(
 /// Build upstream models URL from route config
 fn build_models_url(route: &RouteConfig) -> Option<String> {
     match route.provider_type {
-        ProviderType::OpenAi => {
-            route.base_url
-                .as_ref()
-                .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/')))
-        }
+        ProviderType::OpenAi => route
+            .base_url
+            .as_ref()
+            .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/'))),
         ProviderType::OpenAiCompatible => {
             // Try to extract base_url from the full chat completions URL
             route.url.as_ref().and_then(|url| {
                 url.find("/v1/chat/completions")
                     .map(|idx| format!("{}/v1/models", &url[..idx]))
-                    .or_else(|| route.base_url
-                        .as_ref()
-                        .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/')))
-                    )
+                    .or_else(|| {
+                        route
+                            .base_url
+                            .as_ref()
+                            .map(|base_url| format!("{}/v1/models", base_url.trim_end_matches('/')))
+                    })
             })
         }
         ProviderType::Ollama | ProviderType::Anthropic | ProviderType::Gemini => None,
@@ -1276,7 +1387,8 @@ async fn fetch_upstream_model_info(
                 if let Ok(upstream_response) = resp.json::<OpenAIModelsListResponse>().await {
                     // Find matching model in upstream response
                     let upstream_model_name = route.upstream_model();
-                    if let Some(upstream_model) = upstream_response.data
+                    if let Some(upstream_model) = upstream_response
+                        .data
                         .iter()
                         .find(|m| m.id == upstream_model_name || m.id == route.model_name)
                     {
@@ -1317,9 +1429,7 @@ async fn fetch_upstream_model_info(
 }
 
 /// Axum handler for GET /v1/models - returns list of all enabled models
-pub async fn models_handler(
-    State(state): State<Arc<ProxyState>>,
-) -> impl IntoResponse {
+pub async fn models_handler(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
     let created = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1345,9 +1455,7 @@ pub async fn models_handler(
 // =============================================================================
 
 /// Handler for POST /v1/admin/reload-config
-pub async fn reload_config_handler(
-    State(state): State<Arc<ProxyState>>,
-) -> impl IntoResponse {
+pub async fn reload_config_handler(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
     // Load and validate new configuration
     let new_config = match Config::load_and_validate(&state.config_path) {
         Ok(cfg) => cfg,
@@ -1358,8 +1466,9 @@ pub async fn reload_config_handler(
                 Json(json!({
                     "status": "error",
                     "message": format!("Failed to reload configuration: {}", e)
-                }))
-            ).into_response();
+                })),
+            )
+                .into_response();
         }
     };
 
@@ -1395,15 +1504,20 @@ pub async fn reload_config_handler(
         warnings.push("Server host change requires server restart to take effect".to_string());
     }
     if new_config.logging != current_config.logging {
-        warnings.push("Logging configuration changes require server restart to take effect".to_string());
+        warnings.push(
+            "Logging configuration changes require server restart to take effect".to_string(),
+        );
     }
     if new_config.statistics.stats_file != current_config.statistics.stats_file
-        || new_config.statistics.aggregation_interval_secs != current_config.statistics.aggregation_interval_secs
+        || new_config.statistics.aggregation_interval_secs
+            != current_config.statistics.aggregation_interval_secs
     {
-        warnings.push("Statistics config changes require server restart to take effect.".to_string());
+        warnings
+            .push("Statistics config changes require server restart to take effect.".to_string());
     }
     if new_config.server.proxy != current_config.server.proxy {
-        warnings.push("Proxy configuration changes require server restart to take effect".to_string());
+        warnings
+            .push("Proxy configuration changes require server restart to take effect".to_string());
     }
 
     // Update the configuration atomically
@@ -1417,24 +1531,27 @@ pub async fn reload_config_handler(
             "status": "success",
             "message": "Configuration reloaded successfully",
             "warnings": warnings
-        }))
-    ).into_response()
+        })),
+    )
+        .into_response()
 }
 
 /// Handler for GET /v1/admin/config - returns current configuration (sensitive fields masked)
-pub async fn get_config_handler(
-    State(state): State<Arc<ProxyState>>,
-) -> impl IntoResponse {
+pub async fn get_config_handler(State(state): State<Arc<ProxyState>>) -> impl IntoResponse {
     let config = state.config.load();
 
     // Build routes with provider_type only (no api keys exposed)
-    let routes: Vec<_> = config.routes.iter().map(|route| {
-        json!({
-            "model_name": route.model_name,
-            "provider_type": format!("{:?}", route.provider_type).to_lowercase(),
-            "enabled": route.enabled
+    let routes: Vec<_> = config
+        .routes
+        .iter()
+        .map(|route| {
+            json!({
+                "model_name": route.model_name,
+                "provider_type": format!("{:?}", route.provider_type).to_lowercase(),
+                "enabled": route.enabled
+            })
         })
-    }).collect();
+        .collect();
 
     let response = json!({
         "server": {

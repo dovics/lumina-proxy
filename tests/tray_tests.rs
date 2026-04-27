@@ -4,7 +4,9 @@ mod tests {
 
     fn clear_env_vars() {
         for key in &["LANG", "LC_ALL", "LC_MESSAGES", "USERLANGUAGE"] {
-            unsafe { env::remove_var(key); }
+            unsafe {
+                env::remove_var(key);
+            }
         }
     }
 
@@ -17,7 +19,9 @@ mod tests {
     #[ignore = "env vars are process-global, run manually"]
     fn test_language_detection_zh() {
         clear_env_vars();
-        unsafe { env::set_var("LANG", "zh_CN.UTF-8"); }
+        unsafe {
+            env::set_var("LANG", "zh_CN.UTF-8");
+        }
         assert_eq!(lumina::tray::detect_system_language(), "zh");
     }
 
@@ -25,7 +29,9 @@ mod tests {
     #[ignore = "env vars are process-global, run manually"]
     fn test_language_detection_en() {
         clear_env_vars();
-        unsafe { env::set_var("LANG", "en_US.UTF-8"); }
+        unsafe {
+            env::set_var("LANG", "en_US.UTF-8");
+        }
         assert_eq!(lumina::tray::detect_system_language(), "en");
     }
 

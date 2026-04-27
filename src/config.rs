@@ -1,8 +1,8 @@
-use serde::Deserialize;
-use std::fs;
 use anyhow::Result;
 use chrono::Utc;
+use serde::Deserialize;
 use std::collections::HashSet;
+use std::fs;
 
 /// Rotation strategy for log files
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -184,8 +184,12 @@ impl Config {
                 return Err(format!("Duplicate model name: {}", route.model_name));
             }
             if let Some(upstream) = &route.upstream_model
-                && upstream.is_empty() {
-                return Err(format!("Upstream model for '{}' cannot be empty (remove the field if not used)", route.model_name));
+                && upstream.is_empty()
+            {
+                return Err(format!(
+                    "Upstream model for '{}' cannot be empty (remove the field if not used)",
+                    route.model_name
+                ));
             }
         }
 
@@ -204,8 +208,8 @@ impl Config {
 
     /// Load configuration from a YAML file and validate it
     pub fn load_and_validate(path: &str) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
         let mut config: Self = serde_yaml::from_str(&content)
             .map_err(|e| format!("Failed to parse config file: {}", e))?;

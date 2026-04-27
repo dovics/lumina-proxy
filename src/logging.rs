@@ -6,11 +6,11 @@
 use crate::config::{LoggingConfig, RotationStrategy};
 use crate::types::ProxyError;
 use tracing::Level;
-use tracing_appender::rolling::{Rotation, RollingFileAppender};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
+    EnvFilter,
     fmt::{self},
     prelude::*,
-    EnvFilter,
 };
 
 /// Initialize the logging system based on the provided configuration
@@ -53,12 +53,13 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), ProxyError> {
     }
 
     // Add file layer if enabled
-    if let Some(file_config) = &config.file && file_config.enabled {
+    if let Some(file_config) = &config.file
+        && file_config.enabled
+    {
         // Get the log file path
-        let path = file_config
-            .path
-            .as_deref()
-            .ok_or_else(|| ProxyError::ConfigError("File logging enabled but no path provided".into()))?;
+        let path = file_config.path.as_deref().ok_or_else(|| {
+            ProxyError::ConfigError("File logging enabled but no path provided".into())
+        })?;
 
         // Get directory and filename prefix from path
         let (directory, filename_prefix) = split_path(path);
@@ -69,36 +70,37 @@ pub fn init_logging(config: &LoggingConfig) -> Result<(), ProxyError> {
             .filename_prefix(filename_prefix)
             .max_log_files(max_log_files as usize);
 
-        let appender = match file_config.rotation.unwrap_or(RotationStrategy::Never) {
-            RotationStrategy::Daily => {
-                builder
+        let appender =
+            match file_config.rotation.unwrap_or(RotationStrategy::Never) {
+                RotationStrategy::Daily => builder
                     .rotation(Rotation::DAILY)
                     .build(directory)
-                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create daily log appender: {}", e)))?
-            }
-            // tracing-appender 0.2.5 primarily supports time-based rotation.
-            // For size-based rotation, the PRD asks for size-based rotation so we keep the configuration
-            // and use daily rotation with max files, which is the closest approximation
-            // that tracing-appender supports in this version.
-            RotationStrategy::Size => {
-                builder
+                    .map_err(|e| {
+                        ProxyError::ConfigError(format!(
+                            "Failed to create daily log appender: {}",
+                            e
+                        ))
+                    })?,
+                // tracing-appender 0.2.5 primarily supports time-based rotation.
+                // For size-based rotation, the PRD asks for size-based rotation so we keep the configuration
+                // and use daily rotation with max files, which is the closest approximation
+                // that tracing-appender supports in this version.
+                RotationStrategy::Size => builder
                     .rotation(Rotation::DAILY)
                     .build(directory)
-                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
-            }
-            RotationStrategy::Never => {
-                builder
+                    .map_err(|e| {
+                        ProxyError::ConfigError(format!("Failed to create log appender: {}", e))
+                    })?,
+                RotationStrategy::Never => builder
                     .rotation(Rotation::NEVER)
                     .build(directory)
-                    .map_err(|e| ProxyError::ConfigError(format!("Failed to create log appender: {}", e)))?
-            }
-        };
+                    .map_err(|e| {
+                        ProxyError::ConfigError(format!("Failed to create log appender: {}", e))
+                    })?,
+            };
 
         // Create JSON-formatted file layer
-        let file_layer = fmt::layer()
-            .json()
-            .with_target(true)
-            .with_writer(appender);
+        let file_layer = fmt::layer().json().with_target(true).with_writer(appender);
         layers.push(file_layer.boxed());
     }
 

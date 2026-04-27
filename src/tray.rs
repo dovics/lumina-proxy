@@ -1,18 +1,18 @@
 //! System Tray Module
 //! Provides cross-platform system tray functionality for graceful shutdown and config management
 
-use anyhow::Result;
-use anyhow::Context;
-use arc_swap::ArcSwap;
-use std::sync::Arc;
 use crate::config::Config;
-use tao::event_loop::{EventLoop, ControlFlow};
+use anyhow::Context;
+use anyhow::Result;
+use arc_swap::ArcSwap;
+use std::path::Path;
+use std::sync::Arc;
+use tao::event_loop::{ControlFlow, EventLoop};
 use tokio::sync::mpsc;
 use tray_icon::{
+    Icon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    TrayIconBuilder, Icon,
 };
-use std::path::Path;
 
 pub struct TrayManager {
     shutdown_tx: mpsc::Sender<()>,
@@ -46,8 +46,16 @@ pub fn detect_system_language() -> &'static str {
 
 impl TrayManager {
     /// Create new TrayManager with shutdown sender and shared config
-    pub fn new(shutdown_tx: mpsc::Sender<()>, config: Arc<ArcSwap<Config>>, config_path: String) -> Result<Self> {
-        Ok(Self { shutdown_tx, config, config_path })
+    pub fn new(
+        shutdown_tx: mpsc::Sender<()>,
+        config: Arc<ArcSwap<Config>>,
+        config_path: String,
+    ) -> Result<Self> {
+        Ok(Self {
+            shutdown_tx,
+            config,
+            config_path,
+        })
     }
 
     /// Run tray event loop (blocks main thread)
@@ -63,9 +71,8 @@ impl TrayManager {
         // Wrap tray creation in catch_unwind because:
         // - GTK on Linux can panic via C FFI if display unavailable
         // - AppKit on macOS can panic in certain headless scenarios
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.run_inner(server_addr)
-        })) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.run_inner(server_addr)))
+        {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
                 tracing::warn!("Tray failed to start: {}, running without tray", e);
@@ -173,11 +180,7 @@ impl TrayManager {
 
         let status_text = format!("{}\n{}", t("status_running", "🟢  Running"), server_addr);
 
-        let status_item = MenuItem::new(
-            status_text,
-            false,
-            None,
-        );
+        let status_item = MenuItem::new(status_text, false, None);
 
         let reload_item = MenuItem::with_id(
             "reload_config",
@@ -200,12 +203,7 @@ impl TrayManager {
             None,
         );
 
-        let exit_item = MenuItem::with_id(
-            "exit",
-            t("exit", "Exit"),
-            true,
-            None,
-        );
+        let exit_item = MenuItem::with_id("exit", t("exit", "Exit"), true, None);
 
         let menu = Menu::new();
         menu.append_items(&[
@@ -216,7 +214,8 @@ impl TrayManager {
             &show_config_item,
             &PredefinedMenuItem::separator(),
             &exit_item,
-        ]).unwrap();
+        ])
+        .unwrap();
 
         menu
     }
@@ -260,9 +259,7 @@ impl TrayManager {
     fn open_config_file(path: &str) {
         let path = Path::new(path);
         if path.exists() {
-            let result = std::process::Command::new("open")
-                .arg(path)
-                .spawn();
+            let result = std::process::Command::new("open").arg(path).spawn();
             if let Err(e) = result {
                 tracing::error!("Failed to open config file: {}", e);
             }
@@ -275,9 +272,7 @@ impl TrayManager {
     fn open_config_file(path: &str) {
         let path = Path::new(path);
         if path.exists() {
-            let result = std::process::Command::new("xdg-open")
-                .arg(path)
-                .spawn();
+            let result = std::process::Command::new("xdg-open").arg(path).spawn();
             if let Err(e) = result {
                 tracing::error!("Failed to open config file: {}", e);
             }

@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.85-alpine AS builder
+FROM rust:1.89-alpine AS builder
 
 # Install minimal build dependencies (no tray/X11/GTK needed for Docker)
 RUN apk add --no-cache \
