@@ -180,6 +180,119 @@ fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
     aggregated.into_values().collect()
 }
 
+/// Parse tool calls from Moonlight's special marker format embedded in content field.
+///
+/// Marker format:
+/// - `<|tool_calls_section_begin|>` / `<|tool_calls_section_end|>` - wraps all tool calls
+/// - `<|tool_call_begin|>` / `<|tool_call_end|>` - wraps each tool call
+/// - `<|tool_call_argument_begin|>` - separates tool ID from arguments
+///
+/// Tool ID format: `functions.{func_name}:{idx}`
+pub(crate) fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
+    let mut tool_calls = Vec::new();
+
+    // Find the tool calls section
+    let section_start = match content.find("<|tool_calls_section_begin|>") {
+        Some(pos) => pos + "<|tool_calls_section_begin|>".len(),
+        None => return tool_calls, // No tool calls section
+    };
+
+    let section_end = match content.find("<|tool_calls_section_end|>") {
+        Some(pos) => pos,
+        None => return tool_calls, // Malformed, no end marker
+    };
+
+    let section_content = &content[section_start..section_end];
+    let mut index: u32 = 0;
+
+    // Parse each tool call
+    let mut remaining = section_content;
+    while let Some(call_start) = remaining.find("<|tool_call_begin|>") {
+        let after_call_start = &remaining[call_start + "<|tool_call_begin|>".len()..];
+        if let Some(call_end) = after_call_start.find("<|tool_call_end|>") {
+            let call_content = &after_call_start[..call_end];
+            if let Some(tool_call) = extract_moonlight_tool_call(call_content, index) {
+                tool_calls.push(tool_call);
+                index += 1;
+            }
+            remaining = &after_call_start[call_end + "<|tool_call_end|>".len()..];
+        } else {
+            break;
+        }
+    }
+
+    tool_calls
+}
+
+/// Extract a single tool call from a Moonlight tool call segment
+fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCall> {
+    let parts: Vec<&str> = segment.split("<|tool_call_argument_begin|>").collect();
+    if parts.len() != 2 {
+        tracing::warn!("Malformed tool call segment: expected 2 parts separated by <|tool_call_argument_begin|>");
+        return None;
+    }
+
+    let tool_id = parts[0].trim();
+    let arguments = parts[1].trim();
+
+    // Parse function name from tool ID (format: functions.{func_name}:{idx})
+    let func_name = if let Some(stripped) = tool_id.strip_prefix("functions.") {
+        match stripped.rfind(':') {
+            Some(pos) => &stripped[..pos],
+            None => {
+                tracing::warn!("Malformed tool ID '{}': missing colon separator", tool_id);
+                return None;
+            }
+        }
+    } else {
+        tracing::warn!("Malformed tool ID '{}': missing 'functions.' prefix", tool_id);
+        return None;
+    };
+
+    // Generate a random ID
+    let id = format!("call_{}", generate_random_id());
+
+    Some(OpenAIToolCall {
+        index: Some(index),
+        id,
+        r#type: Some("function".to_string()),  // type is reserved keyword in Rust
+        function: OpenAIToolCallFunction {
+            name: Some(func_name.to_string()),
+            arguments: Some(arguments.to_string()),
+        },
+    })
+}
+
+/// Generate a random 12-character alphanumeric ID
+fn generate_random_id() -> String {
+    use std::iter;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::Rng::random_u64();
+    iter::repeat_with(|| {
+        let idx = (rng % CHARSET.len() as u64) as usize;
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        CHARSET[idx] as char
+    })
+    .take(12)
+    .collect()
+}
+
+/// Strip Moonlight tool call markers from content, preserving surrounding text
+fn strip_moonlight_tool_markers(content: &str) -> String {
+    let markers = [
+        "<|tool_calls_section_begin|>",
+        "<|tool_calls_section_end|>",
+        "<|tool_call_begin|>",
+        "<|tool_call_end|>",
+        "<|tool_call_argument_begin|>",
+    ];
+    let mut result = content.to_string();
+    for marker in &markers {
+        result = result.replace(marker, "");
+    }
+    result
+}
+
 // =============================================================================
 // Non-streaming Request Handling
 // =============================================================================
