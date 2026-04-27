@@ -95,10 +95,6 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
 
 ### 4. Update Configuration
 
-**File: `config.rs`**
-
-Ensure Moonlight is handled in config validation if needed.
-
 **File: `config.yaml`**
 
 Add Moonlight provider example:
@@ -144,7 +140,7 @@ Some text before<|tool_calls_section_begin|><|tool_call_begin|>functions.get_wea
 }
 ```
 
-**Note:** The `id` field is generated since Moonlight doesn't provide one in this format.
+**Note:** The `id` field is generated using format `call_{random_12_alphanumeric_chars}` since Moonlight doesn't provide one in this format. Use `format!("call_{}", generate_random_id())` where `generate_random_id()` produces 12 random alphanumeric characters.
 
 ## Edge Cases
 
@@ -172,6 +168,8 @@ Add tests in `tests/conversion_tests.rs`:
 | `src/proxy.rs` | Add Moonlight branch in streaming handler, add parsing functions |
 | `config.yaml` | Add Moonlight provider example |
 | `tests/conversion_tests.rs` | Add Moonlight tool call parsing tests |
+
+**Note:** `config.rs` does not require modification - provider type validation is enum-based and automatically handles new variants.
 
 ## Success Criteria
 
