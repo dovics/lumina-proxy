@@ -736,3 +736,8 @@ pub fn format_responses_sse_event(event_type: &str, data: &serde_json::Value) ->
 pub fn format_responses_sse_done() -> String {
     "data: [DONE]\n\n".to_string()
 }
+
+/// Convert an OpenAI-format chat request to Moonlight (passthrough - Moonlight accepts OpenAI format)
+pub fn convert_openai_to_moonlight(req: &OpenAIChatRequest) -> OpenAIChatRequest {
+    req.clone()
+}
