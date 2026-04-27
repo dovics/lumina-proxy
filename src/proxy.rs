@@ -247,7 +247,9 @@ pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
 fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCall> {
     let parts: Vec<&str> = segment.split("<|tool_call_argument_begin|>").collect();
     if parts.len() != 2 {
-        tracing::warn!("Malformed tool call segment: expected 2 parts separated by <|tool_call_argument_begin|>");
+        tracing::warn!(
+            "Malformed tool call segment: expected 2 parts separated by <|tool_call_argument_begin|>"
+        );
         return None;
     }
 
@@ -264,7 +266,10 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
             }
         }
     } else {
-        tracing::warn!("Malformed tool ID '{}': missing 'functions.' prefix", tool_id);
+        tracing::warn!(
+            "Malformed tool ID '{}': missing 'functions.' prefix",
+            tool_id
+        );
         return None;
     };
 
@@ -274,7 +279,7 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
     Some(OpenAIToolCall {
         index: Some(index),
         id: Some(id),
-        r#type: Some("function".to_string()),  // type is reserved keyword in Rust
+        r#type: Some("function".to_string()), // type is reserved keyword in Rust
         function: Some(OpenAIToolCallFunction {
             name: Some(func_name.to_string()),
             arguments: Some(arguments.to_string()),
@@ -284,8 +289,8 @@ fn extract_moonlight_tool_call(segment: &str, index: u32) -> Option<OpenAIToolCa
 
 /// Generate a random 12-character alphanumeric ID
 fn generate_random_id() -> String {
-    use std::iter;
     use rand::Rng;
+    use std::iter;
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
     iter::repeat_with(|| {
@@ -384,7 +389,9 @@ async fn handle_non_streaming(
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to serialize Moonlight request: {}", e) })),
+                    Json(
+                        json!({ "error": format!("Failed to serialize Moonlight request: {}", e) }),
+                    ),
                 )
             }),
     };
@@ -641,7 +648,9 @@ async fn handle_streaming(
             .map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to serialize Moonlight request: {}", e) })),
+                    Json(
+                        json!({ "error": format!("Failed to serialize Moonlight request: {}", e) }),
+                    ),
                 )
             }),
     };
@@ -938,23 +947,31 @@ async fn handle_streaming(
                                             let content_str = content.as_str();
 
                                             // Check for tool call section markers
-                                            if content_str.contains("<|tool_calls_section_begin|>") {
-                                                let parsed = parse_moonlight_tool_calls(content_str);
-                                                let text_only = strip_moonlight_tool_markers(content_str);
+                                            if content_str.contains("<|tool_calls_section_begin|>")
+                                            {
+                                                let parsed =
+                                                    parse_moonlight_tool_calls(content_str);
+                                                let text_only =
+                                                    strip_moonlight_tool_markers(content_str);
 
                                                 if !parsed.is_empty() {
                                                     for tc in &parsed {
                                                         if let Some(ref f) = tc.function {
-                                                            if let Some(ref n) = f.name { counter.add_delta(n); }
-                                                            if let Some(ref a) = f.arguments { counter.add_delta(a); }
+                                                            if let Some(ref n) = f.name {
+                                                                counter.add_delta(n);
+                                                            }
+                                                            if let Some(ref a) = f.arguments {
+                                                                counter.add_delta(a);
+                                                            }
                                                         }
                                                     }
                                                     choice.delta.tool_calls = Some(parsed);
-                                                    choice.delta.content = if text_only.trim().is_empty() {
-                                                        None
-                                                    } else {
-                                                        Some(text_only)
-                                                    };
+                                                    choice.delta.content =
+                                                        if text_only.trim().is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(text_only)
+                                                        };
                                                     has_content = true;
                                                 } else if !text_only.is_empty() {
                                                     counter.add_delta(&text_only);
@@ -1642,258 +1659,351 @@ fn convert_chat_sse_to_responses_sse(
         model,
         created_at,
         prompt_tokens,
-        true,                        // is_first_chunk - send response.created first
-        false,                       // message_item_added_sent
-        false,                       // completed_sent - track if completion events were sent
+        true,                             // is_first_chunk - send response.created first
+        false,                            // message_item_added_sent
+        false,                            // completed_sent - track if completion events were sent
         std::collections::HashSet::new(), // function_call_indices_sent
     );
 
-    futures_util::stream::unfold(initial_state, |(
-        mut bytes_stream,
-        mut buffer,
-        response_id,
-        model,
-        created_at,
-        prompt_tokens,
-        is_first_chunk,
-        mut message_item_added_sent,
-        completed_sent,
-        mut function_call_indices_sent,
-    )| async move {
-        if is_first_chunk {
-            // Send response.created event first
-            let (_, event_data) = create_response_created_event(&response_id, &model, created_at);
-            let sse_line = format_responses_sse_event("response.created", &event_data);
-            return Some((
-                Ok(Bytes::from(sse_line)),
-                (bytes_stream, buffer, response_id, model, created_at, prompt_tokens, false, message_item_added_sent, completed_sent, function_call_indices_sent),
-            ));
-        }
+    futures_util::stream::unfold(
+        initial_state,
+        |(
+            mut bytes_stream,
+            mut buffer,
+            response_id,
+            model,
+            created_at,
+            prompt_tokens,
+            is_first_chunk,
+            mut message_item_added_sent,
+            completed_sent,
+            mut function_call_indices_sent,
+        )| async move {
+            if is_first_chunk {
+                // Send response.created event first
+                let (_, event_data) =
+                    create_response_created_event(&response_id, &model, created_at);
+                let sse_line = format_responses_sse_event("response.created", &event_data);
+                return Some((
+                    Ok(Bytes::from(sse_line)),
+                    (
+                        bytes_stream,
+                        buffer,
+                        response_id,
+                        model,
+                        created_at,
+                        prompt_tokens,
+                        false,
+                        message_item_added_sent,
+                        completed_sent,
+                        function_call_indices_sent,
+                    ),
+                ));
+            }
 
-        loop {
-            // Process complete lines from buffer
-            while let Some(pos) = buffer.find('\n') {
-                let line = buffer[0..pos].trim().to_string();
-                buffer = buffer[pos + 1..].to_string();
+            loop {
+                // Process complete lines from buffer
+                while let Some(pos) = buffer.find('\n') {
+                    let line = buffer[0..pos].trim().to_string();
+                    buffer = buffer[pos + 1..].to_string();
 
-                if line.is_empty() || !line.starts_with("data: ") {
-                    continue;
-                }
-
-                let data = &line["data: ".len()..];
-
-                if data.trim() == "[DONE]" {
-                    // End of stream - send output_item.done and completed events
-                    if !completed_sent {
-                        let output_item_id = format!("item_{}", &response_id[0..8]);
-                        let (_, done_event) =
-                            create_response_output_item_done_event(&output_item_id, created_at);
-                        let done_line = format_responses_sse_event("response.output_item.done", &done_event);
-
-                        // response.completed event with full response object
-                        // Note: For streaming responses, exact token counts are not easily available
-                        // here; clients typically rely on response.created for prompt tokens and
-                        // sum deltas for output tokens, or use non-streaming mode for accurate usage
-                        let completed_event = json!({
-                            "type": "response.completed",
-                            "created_at": created_at,
-                            "response": {
-                                "id": response_id,
-                                "object": "response",
-                                "created_at": created_at,
-                                "model": model,
-                                "status": "completed",
-                                "output": [],
-                                "usage": {
-                                    "input_tokens": prompt_tokens,
-                                    "output_tokens": 0,
-                                    "total_tokens": prompt_tokens
-                                }
-                            }
-                        });
-                        let completed_line = format_responses_sse_event("response.completed", &completed_event);
-
-                        let final_line = format_responses_sse_done();
-
-                        // Combine all final events
-                        let combined = format!("{}{}{}", done_line, completed_line, final_line);
-                        return Some((
-                            Ok(Bytes::from(combined)),
-                            (bytes_stream, buffer, response_id, model, created_at, prompt_tokens, false, message_item_added_sent, true, function_call_indices_sent),
-                        ));
+                    if line.is_empty() || !line.starts_with("data: ") {
+                        continue;
                     }
-                    return None;
-                }
 
-                // Parse Chat Completions chunk
-                match serde_json::from_str::<OpenAIStreamChunk>(data) {
-                    Ok(chunk) => {
-                        // Trace: Log raw chunk structure for tool call debugging
-                        if !chunk.choices.is_empty() {
-                            let choice = &chunk.choices[0];
-                            if choice.delta.tool_calls.is_some() {
-                                tracing::trace!("Received tool_calls in delta: {:?}", choice.delta.tool_calls);
-                            }
-                            if let Some(ref content) = choice.delta.content {
-                                if content.contains("tool_calls_section") || content.contains("<|tool_call") {
-                                    tracing::trace!("Tool call special tokens found in content: {}", content);
+                    let data = &line["data: ".len()..];
+
+                    if data.trim() == "[DONE]" {
+                        // End of stream - send output_item.done and completed events
+                        if !completed_sent {
+                            let output_item_id = format!("item_{}", &response_id[0..8]);
+                            let (_, done_event) =
+                                create_response_output_item_done_event(&output_item_id, created_at);
+                            let done_line = format_responses_sse_event(
+                                "response.output_item.done",
+                                &done_event,
+                            );
+
+                            // response.completed event with full response object
+                            // Note: For streaming responses, exact token counts are not easily available
+                            // here; clients typically rely on response.created for prompt tokens and
+                            // sum deltas for output tokens, or use non-streaming mode for accurate usage
+                            let completed_event = json!({
+                                "type": "response.completed",
+                                "created_at": created_at,
+                                "response": {
+                                    "id": response_id,
+                                    "object": "response",
+                                    "created_at": created_at,
+                                    "model": model,
+                                    "status": "completed",
+                                    "output": [],
+                                    "usage": {
+                                        "input_tokens": prompt_tokens,
+                                        "output_tokens": 0,
+                                        "total_tokens": prompt_tokens
+                                    }
+                                }
+                            });
+                            let completed_line =
+                                format_responses_sse_event("response.completed", &completed_event);
+
+                            let final_line = format_responses_sse_done();
+
+                            // Combine all final events
+                            let combined = format!("{}{}{}", done_line, completed_line, final_line);
+                            return Some((
+                                Ok(Bytes::from(combined)),
+                                (
+                                    bytes_stream,
+                                    buffer,
+                                    response_id,
+                                    model,
+                                    created_at,
+                                    prompt_tokens,
+                                    false,
+                                    message_item_added_sent,
+                                    true,
+                                    function_call_indices_sent,
+                                ),
+                            ));
+                        }
+                        return None;
+                    }
+
+                    // Parse Chat Completions chunk
+                    match serde_json::from_str::<OpenAIStreamChunk>(data) {
+                        Ok(chunk) => {
+                            // Trace: Log raw chunk structure for tool call debugging
+                            if !chunk.choices.is_empty() {
+                                let choice = &chunk.choices[0];
+                                if choice.delta.tool_calls.is_some() {
+                                    tracing::trace!(
+                                        "Received tool_calls in delta: {:?}",
+                                        choice.delta.tool_calls
+                                    );
+                                }
+                                if let Some(ref content) = choice.delta.content
+                                    && (content.contains("tool_calls_section")
+                                        || content.contains("<|tool_call"))
+                                {
+                                    tracing::trace!(
+                                        "Tool call special tokens found in content: {}",
+                                        content
+                                    );
                                 }
                             }
-                        }
 
-                        let mut sse_output = String::new();
+                            let mut sse_output = String::new();
 
-                        // Process each choice to handle initialization
-                        for choice in &chunk.choices {
-                            // Check for text content and initialize if needed
-                            if let Some(ref content) = choice.delta.content
-                                && !content.is_empty()
-                                && !message_item_added_sent
-                            {
-                                let output_item_id = format!("item_{}", &response_id[0..8]);
-                                // output_item.added event for message
-                                let output_item_added = json!({
-                                    "type": "response.output_item.added",
-                                    "output_index": 0,
-                                    "item": {
-                                        "id": output_item_id,
-                                        "type": "message",
-                                        "status": "in_progress",
-                                        "role": "assistant",
-                                        "content": []
-                                    },
-                                    "created_at": created_at
-                                });
-                                sse_output.push_str(&format_responses_sse_event("response.output_item.added", &output_item_added));
+                            // Process each choice to handle initialization
+                            for choice in &chunk.choices {
+                                // Check for text content and initialize if needed
+                                if let Some(ref content) = choice.delta.content
+                                    && !content.is_empty()
+                                    && !message_item_added_sent
+                                {
+                                    let output_item_id = format!("item_{}", &response_id[0..8]);
+                                    // output_item.added event for message
+                                    let output_item_added = json!({
+                                        "type": "response.output_item.added",
+                                        "output_index": 0,
+                                        "item": {
+                                            "id": output_item_id,
+                                            "type": "message",
+                                            "status": "in_progress",
+                                            "role": "assistant",
+                                            "content": []
+                                        },
+                                        "created_at": created_at
+                                    });
+                                    sse_output.push_str(&format_responses_sse_event(
+                                        "response.output_item.added",
+                                        &output_item_added,
+                                    ));
 
-                                // content_part.added event
-                                let content_part_added = json!({
-                                    "type": "response.content_part.added",
-                                    "output_index": 0,
-                                    "content_index": 0,
-                                    "part": {
-                                        "type": "text",
-                                        "text": ""
-                                    },
-                                    "created_at": created_at
-                                });
-                                sse_output.push_str(&format_responses_sse_event("response.content_part.added", &content_part_added));
-                                message_item_added_sent = true;
-                            }
+                                    // content_part.added event
+                                    let content_part_added = json!({
+                                        "type": "response.content_part.added",
+                                        "output_index": 0,
+                                        "content_index": 0,
+                                        "part": {
+                                            "type": "text",
+                                            "text": ""
+                                        },
+                                        "created_at": created_at
+                                    });
+                                    sse_output.push_str(&format_responses_sse_event(
+                                        "response.content_part.added",
+                                        &content_part_added,
+                                    ));
+                                    message_item_added_sent = true;
+                                }
 
-                            // Check for tool calls and initialize each function_call if needed
-                            if let Some(ref tool_calls) = choice.delta.tool_calls {
-                                for tool_call in tool_calls {
-                                    let call_index = tool_call.index.unwrap_or(0);
-                                    let output_index = call_index + 1; // text is index 0
+                                // Check for tool calls and initialize each function_call if needed
+                                if let Some(ref tool_calls) = choice.delta.tool_calls {
+                                    for tool_call in tool_calls {
+                                        let call_index = tool_call.index.unwrap_or(0);
+                                        let output_index = call_index + 1; // text is index 0
 
-                                    if !function_call_indices_sent.contains(&output_index) {
-                                        // Initialize function_call output_item
-                                        let func_item_id = format!("func_{}_{}", &response_id[0..8], output_index);
-                                        let func_name = tool_call.function
-                                            .as_ref()
-                                            .and_then(|f| f.name.as_ref())
-                                            .map(|s| s.as_str())
-                                            .unwrap_or("");
+                                        if !function_call_indices_sent.contains(&output_index) {
+                                            // Initialize function_call output_item
+                                            let func_item_id = format!(
+                                                "func_{}_{}",
+                                                &response_id[0..8],
+                                                output_index
+                                            );
+                                            let func_name = tool_call
+                                                .function
+                                                .as_ref()
+                                                .and_then(|f| f.name.as_ref())
+                                                .map(|s| s.as_str())
+                                                .unwrap_or("");
 
-                                        let func_item_added = json!({
-                                            "type": "response.output_item.added",
-                                            "output_index": output_index,
-                                            "item": {
-                                                "id": func_item_id,
-                                                "type": "function_call",
-                                                "status": "in_progress",
-                                                "name": func_name,
-                                                "arguments": ""
-                                            },
-                                            "created_at": created_at
-                                        });
-                                        sse_output.push_str(&format_responses_sse_event("response.output_item.added", &func_item_added));
-                                        function_call_indices_sent.insert(output_index);
+                                            let func_item_added = json!({
+                                                "type": "response.output_item.added",
+                                                "output_index": output_index,
+                                                "item": {
+                                                    "id": func_item_id,
+                                                    "type": "function_call",
+                                                    "status": "in_progress",
+                                                    "name": func_name,
+                                                    "arguments": ""
+                                                },
+                                                "created_at": created_at
+                                            });
+                                            sse_output.push_str(&format_responses_sse_event(
+                                                "response.output_item.added",
+                                                &func_item_added,
+                                            ));
+                                            function_call_indices_sent.insert(output_index);
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // Convert to Responses API events
-                        let events = convert_chat_stream_chunk_to_responses(&chunk, &response_id, created_at);
-                        for (event_type, event_data) in events {
-                            sse_output.push_str(&format_responses_sse_event(&event_type, &event_data));
-                        }
+                            // Convert to Responses API events
+                            let events = convert_chat_stream_chunk_to_responses(
+                                &chunk,
+                                &response_id,
+                                created_at,
+                            );
+                            for (event_type, event_data) in events {
+                                sse_output.push_str(&format_responses_sse_event(
+                                    &event_type,
+                                    &event_data,
+                                ));
+                            }
 
-                        if !sse_output.is_empty() {
-                            return Some((
-                                Ok(Bytes::from(sse_output)),
-                                (bytes_stream, buffer, response_id, model, created_at, prompt_tokens, false, message_item_added_sent, completed_sent, function_call_indices_sent),
-                            ));
+                            if !sse_output.is_empty() {
+                                return Some((
+                                    Ok(Bytes::from(sse_output)),
+                                    (
+                                        bytes_stream,
+                                        buffer,
+                                        response_id,
+                                        model,
+                                        created_at,
+                                        prompt_tokens,
+                                        false,
+                                        message_item_added_sent,
+                                        completed_sent,
+                                        function_call_indices_sent,
+                                    ),
+                                ));
+                            }
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse Chat Completions chunk: {}", e);
+                        Err(e) => {
+                            tracing::warn!("Failed to parse Chat Completions chunk: {}", e);
+                        }
                     }
                 }
-            }
 
-            // No complete lines - read more data
-            match bytes_stream.next().await {
-                Some(Ok(bytes)) => {
-                    match String::from_utf8(bytes.to_vec()) {
+                // No complete lines - read more data
+                match bytes_stream.next().await {
+                    Some(Ok(bytes)) => match String::from_utf8(bytes.to_vec()) {
                         Ok(s) => buffer.push_str(&s),
                         Err(_) => tracing::warn!("Received invalid UTF-8 in stream"),
-                    }
-                }
-                Some(Err(e)) => {
-                    tracing::error!("Stream error: {}", e);
-                    return Some((
-                        Err(std::io::Error::other(e)),
-                        (bytes_stream, buffer, response_id, model, created_at, prompt_tokens, false, message_item_added_sent, completed_sent, function_call_indices_sent),
-                    ));
-                }
-                None => {
-                    // Stream ended
-                    if !completed_sent {
-                        // Send completion events
-                        let output_item_id = format!("item_{}", &response_id[0..8]);
-                        let (_, done_event) =
-                            create_response_output_item_done_event(&output_item_id, created_at);
-                        let done_line = format_responses_sse_event("response.output_item.done", &done_event);
-
-                        // response.completed event with full response object
-                        // Note: For streaming responses, exact token counts are not easily available
-                        // here; clients typically rely on response.created for prompt tokens and
-                        // sum deltas for output tokens, or use non-streaming mode for accurate usage
-                        let completed_event = json!({
-                            "type": "response.completed",
-                            "created_at": created_at,
-                            "response": {
-                                "id": response_id,
-                                "object": "response",
-                                "created_at": created_at,
-                                "model": model,
-                                "status": "completed",
-                                "output": [],
-                                "usage": {
-                                    "input_tokens": prompt_tokens,
-                                    "output_tokens": 0,
-                                    "total_tokens": prompt_tokens
-                                }
-                            }
-                        });
-                        let completed_line = format_responses_sse_event("response.completed", &completed_event);
-
-                        let final_line = format_responses_sse_done();
-
-                        let combined = format!("{}{}{}", done_line, completed_line, final_line);
+                    },
+                    Some(Err(e)) => {
+                        tracing::error!("Stream error: {}", e);
                         return Some((
-                            Ok(Bytes::from(combined)),
-                            (bytes_stream, buffer, response_id, model, created_at, prompt_tokens, false, message_item_added_sent, true, function_call_indices_sent),
+                            Err(std::io::Error::other(e)),
+                            (
+                                bytes_stream,
+                                buffer,
+                                response_id,
+                                model,
+                                created_at,
+                                prompt_tokens,
+                                false,
+                                message_item_added_sent,
+                                completed_sent,
+                                function_call_indices_sent,
+                            ),
                         ));
                     }
-                    return None;
+                    None => {
+                        // Stream ended
+                        if !completed_sent {
+                            // Send completion events
+                            let output_item_id = format!("item_{}", &response_id[0..8]);
+                            let (_, done_event) =
+                                create_response_output_item_done_event(&output_item_id, created_at);
+                            let done_line = format_responses_sse_event(
+                                "response.output_item.done",
+                                &done_event,
+                            );
+
+                            // response.completed event with full response object
+                            // Note: For streaming responses, exact token counts are not easily available
+                            // here; clients typically rely on response.created for prompt tokens and
+                            // sum deltas for output tokens, or use non-streaming mode for accurate usage
+                            let completed_event = json!({
+                                "type": "response.completed",
+                                "created_at": created_at,
+                                "response": {
+                                    "id": response_id,
+                                    "object": "response",
+                                    "created_at": created_at,
+                                    "model": model,
+                                    "status": "completed",
+                                    "output": [],
+                                    "usage": {
+                                        "input_tokens": prompt_tokens,
+                                        "output_tokens": 0,
+                                        "total_tokens": prompt_tokens
+                                    }
+                                }
+                            });
+                            let completed_line =
+                                format_responses_sse_event("response.completed", &completed_event);
+
+                            let final_line = format_responses_sse_done();
+
+                            let combined = format!("{}{}{}", done_line, completed_line, final_line);
+                            return Some((
+                                Ok(Bytes::from(combined)),
+                                (
+                                    bytes_stream,
+                                    buffer,
+                                    response_id,
+                                    model,
+                                    created_at,
+                                    prompt_tokens,
+                                    false,
+                                    message_item_added_sent,
+                                    true,
+                                    function_call_indices_sent,
+                                ),
+                            ));
+                        }
+                        return None;
+                    }
                 }
             }
-        }
-    })
+        },
+    )
 }
 
 /// Build upstream models URL from route config
@@ -1917,7 +2027,7 @@ fn build_models_url(route: &RouteConfig) -> Option<String> {
             })
         }
         ProviderType::Ollama | ProviderType::Anthropic | ProviderType::Gemini => None,
-        ProviderType::Moonlight => None,  // Moonlight doesn't support model listing endpoint
+        ProviderType::Moonlight => None, // Moonlight doesn't support model listing endpoint
     }
 }
 

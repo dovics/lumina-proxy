@@ -537,7 +537,10 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
                     && !params.as_object().unwrap().contains_key("type")
                     && let Some(obj) = params.as_object_mut()
                 {
-                    obj.insert("type".to_string(), serde_json::Value::String("object".to_string()));
+                    obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String("object".to_string()),
+                    );
                 }
                 tool
             })
@@ -663,7 +666,7 @@ pub fn convert_chat_stream_chunk_to_responses(
         if let Some(ref tool_calls) = choice.delta.tool_calls {
             for tool_call in tool_calls {
                 let call_index = tool_call.index.unwrap_or(0);
-                let output_index = call_index + 1;  // +1 because text is index 0
+                let output_index = call_index + 1; // +1 because text is index 0
                 if let Some(ref function) = tool_call.function {
                     // Send function call arguments delta
                     if let Some(ref args) = function.arguments
@@ -676,7 +679,10 @@ pub fn convert_chat_stream_chunk_to_responses(
                             "delta": args,
                             "created_at": created_at
                         });
-                        events.push(("response.function_call_arguments.delta".to_string(), delta_event));
+                        events.push((
+                            "response.function_call_arguments.delta".to_string(),
+                            delta_event,
+                        ));
                     }
                 }
             }
@@ -729,7 +735,11 @@ pub fn create_response_output_item_done_event(
 
 /// Format a Responses API event as SSE line
 pub fn format_responses_sse_event(event_type: &str, data: &serde_json::Value) -> String {
-    format!("event: {}\ndata: {}\n\n", event_type, serde_json::to_string(data).unwrap())
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event_type,
+        serde_json::to_string(data).unwrap()
+    )
 }
 
 /// Format the final [DONE] SSE line

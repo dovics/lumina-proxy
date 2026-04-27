@@ -114,8 +114,7 @@ pub struct OpenAIFunctionCall {
 }
 
 /// Function specification for a tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIToolFunction {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]

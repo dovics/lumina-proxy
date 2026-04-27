@@ -9,8 +9,8 @@ use lumina::types::{
     AnthropicChatResponse, AnthropicContent, AnthropicDelta, AnthropicStreamChunk, AnthropicUsage,
     GeminiCandidate, GeminiChatResponse, GeminiContent, GeminiPart, GeminiStreamChunk,
     GeminiUsageMetadata, OllamaChatResponse, OllamaDelta, OllamaMessage, OllamaStreamChunk,
-    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall,
-    OpenAIToolCallFunction, OpenAIToolFunction,
+    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall, OpenAIToolCallFunction,
+    OpenAIToolFunction,
 };
 
 fn openai_message(role: &str, content: &str) -> OpenAIMessage {
@@ -748,8 +748,14 @@ fn test_parse_moonlight_tool_calls_basic() {
     let tc = &tool_calls[0];
     assert_eq!(tc.index, Some(0));
     assert!(tc.id.as_ref().unwrap().starts_with("call_"));
-    assert_eq!(tc.function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
-    assert_eq!(tc.function.as_ref().unwrap().arguments.as_ref().unwrap(), "{\"location\": \"北京\"}");
+    assert_eq!(
+        tc.function.as_ref().unwrap().name.as_ref().unwrap(),
+        "get_weather"
+    );
+    assert_eq!(
+        tc.function.as_ref().unwrap().arguments.as_ref().unwrap(),
+        "{\"location\": \"北京\"}"
+    );
 }
 
 #[test]
@@ -759,10 +765,28 @@ fn test_parse_moonlight_tool_calls_multiple() {
 
     assert_eq!(tool_calls.len(), 2);
 
-    assert_eq!(tool_calls[0].function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
+    assert_eq!(
+        tool_calls[0]
+            .function
+            .as_ref()
+            .unwrap()
+            .name
+            .as_ref()
+            .unwrap(),
+        "get_weather"
+    );
     assert_eq!(tool_calls[0].index, Some(0));
 
-    assert_eq!(tool_calls[1].function.as_ref().unwrap().name.as_ref().unwrap(), "get_time");
+    assert_eq!(
+        tool_calls[1]
+            .function
+            .as_ref()
+            .unwrap()
+            .name
+            .as_ref()
+            .unwrap(),
+        "get_time"
+    );
     assert_eq!(tool_calls[1].index, Some(1));
 }
 
@@ -774,7 +798,16 @@ fn test_parse_moonlight_tool_calls_with_text() {
     let tool_calls = parse_moonlight_tool_calls(content);
 
     assert_eq!(tool_calls.len(), 1);
-    assert_eq!(tool_calls[0].function.as_ref().unwrap().name.as_ref().unwrap(), "get_weather");
+    assert_eq!(
+        tool_calls[0]
+            .function
+            .as_ref()
+            .unwrap()
+            .name
+            .as_ref()
+            .unwrap(),
+        "get_weather"
+    );
 }
 
 #[test]
