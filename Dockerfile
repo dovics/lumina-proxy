@@ -1,20 +1,10 @@
 # Build stage
 FROM rust:1.85-alpine AS builder
 
-# Install build dependencies for tray icon and other system libraries
+# Install minimal build dependencies (no tray/X11/GTK needed for Docker)
 RUN apk add --no-cache \
     musl-dev \
     pkgconfig \
-    libxcb-dev \
-    libxcb-shape0-dev \
-    libxcb-xfixes0-dev \
-    libayatana-appindicator-dev \
-    gtk+3.0-dev \
-    gdk-pixbuf-dev \
-    pango-dev \
-    atk-dev \
-    fontconfig \
-    fontconfig-dev \
     make \
     gcc
 
@@ -27,14 +17,14 @@ COPY build.rs ./
 # Create dummy main.rs for dependency compilation
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs
 
-# Build dependencies only (this caches the dependency compilation)
-RUN cargo build --release && rm -rf target/release/deps/lumina* src/main.rs
+# Build dependencies only (no-default-features = no tray, smaller build)
+RUN cargo build --release --no-default-features && rm -rf target/release/deps/lumina* src/main.rs
 
 # Copy actual source code
 COPY src ./src
 
-# Build the application
-RUN touch src/main.rs && cargo build --release
+# Build the application without tray feature
+RUN touch src/main.rs && cargo build --release --no-default-features
 
 # Runtime stage - minimal image
 FROM debian:bookworm-slim
@@ -53,8 +43,10 @@ COPY --from=builder /app/target/release/lumina /app/lumina
 # Copy default config
 COPY config.yaml /app/config.yaml
 
-# Create directories for logs and stats
-RUN mkdir -p /app/logs && chown -R nonroot:nonroot /app
+# Create non-root user and directories for logs/stats
+RUN useradd -m nonroot && \
+    mkdir -p /app/logs && \
+    chown -R nonroot:nonroot /app
 
 # Switch to non-root user
 USER nonroot

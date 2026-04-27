@@ -3,6 +3,11 @@ name = "lumina"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["tray"]
+tray = ["dep:tray-icon", "dep:tao"]
+docker = []
+
 [build-dependencies]
 embed-resource = "2.4"
 
@@ -25,5 +30,5 @@ anyhow = "1.0"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde", "std"] }
 arc-swap = "1.0"
-tray-icon = "0.15"
-tao = "0.28"
+tray-icon = { version = "0.15", optional = true }
+tao = { version = "0.28", optional = true }

@@ -7,5 +7,7 @@ pub mod token_counter;
 pub mod stats;
 pub mod logging;
 pub mod proxy;
+
+#[cfg(feature = "tray")]
 pub mod tray;
 

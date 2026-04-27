@@ -15,12 +15,11 @@ use lumina::logging::init_logging;
 use lumina::stats::StatsWriter;
 use lumina::proxy::{ProxyState, models_handler, proxy_handler, reload_config_handler, get_config_handler};
 use lumina::auth::auth_middleware;
+
+#[cfg(feature = "tray")]
 use lumina::tray::TrayManager;
 
 fn main() -> Result<()> {
-    // All platforms: Tao event loop must run on main thread for proper tray support
-    // So we run Axum on a background thread for all platforms
-
     // Get config path from command line argument or use default
     let config_path = std::env::args()
         .nth(1)
@@ -35,7 +34,7 @@ fn main() -> Result<()> {
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
-    // Create shared configuration - accessible from both server and tray
+    // Create shared configuration
     let shared_config = Arc::new(ArcSwap::from_pointee(config));
 
     // Spawn Axum server on a background thread
@@ -56,13 +55,43 @@ fn main() -> Result<()> {
         };
         tracing::info!("Tokio runtime created successfully");
 
-        rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx))
+        // Catch and log any error immediately - don't wait for tray exit
+        let result = rt.block_on(run_server_with_shared_config(server_config, server_config_path, shutdown_rx));
+        if let Err(e) = &result {
+            tracing::error!("Server failed during initialization/execution: {}", e);
+        }
+        result
     });
 
-    // Run tray on main thread
-    tracing::info!("Starting tray on main thread");
-    if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr) {
-        tracing::warn!("Tray failed to start: {}, running without tray", e);
+    #[cfg(feature = "tray")]
+    {
+        // Run tray on main thread (tray requires main thread)
+        tracing::info!("Starting tray on main thread");
+        if let Err(e) = TrayManager::new(shutdown_tx, shared_config, config_path)?.run(server_addr) {
+            tracing::warn!("Tray failed to start: {}, running without tray", e);
+        }
+    }
+
+    #[cfg(not(feature = "tray"))]
+    {
+        // No tray: run server directly and wait for Ctrl+C
+        tracing::info!("Server running on {} (no tray support)", server_addr);
+
+        // Wait for Ctrl+C signal
+        let ctrl_c = std::thread::spawn(|| {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(tokio::signal::ctrl_c())
+        });
+
+        // Wait for either server to exit or Ctrl+C
+        match ctrl_c.join() {
+            Ok(_) => tracing::info!("Received Ctrl+C, shutting down"),
+            Err(e) => tracing::error!("Signal handler failed: {:?}", e),
+        }
+
+        // Send shutdown signal to server
+        let _ = shutdown_tx.blocking_send(());
     }
 
     // Wait for server to finish and log any errors/panics
@@ -118,11 +147,20 @@ async fn run_server_with_shared_config(
     // Initialize stats writer if statistics enabled
     tracing::debug!("Initializing stats writer (enabled: {})", config.statistics.enabled);
     let stats_writer = if config.statistics.enabled {
-        Some(StatsWriter::new(&config.statistics).await?)
+        match StatsWriter::new(&config.statistics).await {
+            Ok(writer) => {
+                tracing::debug!("Stats writer created successfully");
+                Some(writer)
+            }
+            Err(e) => {
+                tracing::error!("Failed to initialize stats writer: {}", e);
+                return Err(e.into());
+            }
+        }
     } else {
         None
     };
-    tracing::debug!("Stats writer initialized");
+    tracing::debug!("Stats writer initialization complete");
 
     // Create proxy state - use the shared config from Windows main thread
     let proxy_state = Arc::new(ProxyState {
@@ -152,6 +190,7 @@ async fn run_server_with_shared_config(
     tracing::info!("Starting server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Server listening on {}", addr);
 
     // Use graceful shutdown
     axum::serve(listener, router)
