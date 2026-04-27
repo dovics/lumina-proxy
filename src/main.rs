@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use lumina::config::Config;
 use lumina::logging::init_logging;
 use lumina::stats::StatsWriter;
-use lumina::proxy::{ProxyState, models_handler, proxy_handler, reload_config_handler, get_config_handler};
+use lumina::proxy::{ProxyState, models_handler, proxy_handler, responses_handler, reload_config_handler, get_config_handler};
 use lumina::auth::auth_middleware;
 
 #[cfg(feature = "tray")]
@@ -173,6 +173,7 @@ async fn run_server_with_shared_config(
     // Build Axum router
     let mut router = Router::new()
         .route("/v1/chat/completions", post(proxy_handler))
+        .route("/v1/responses", post(responses_handler))
         .route("/v1/models", get(models_handler))
         .route("/v1/admin/reload-config", post(reload_config_handler))
         .route("/v1/admin/config", get(get_config_handler));

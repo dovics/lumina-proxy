@@ -43,6 +43,15 @@ pub struct ProxyState {
 
 /// Build the appropriate backend URL based on provider type and route config
 pub fn build_backend_url(route: &RouteConfig, model: &str) -> Result<String, ProxyError> {
+    build_backend_url_for_endpoint(route, model, false)
+}
+
+/// Build backend URL with option to use Responses API endpoint
+pub fn build_backend_url_for_endpoint(
+    route: &RouteConfig,
+    model: &str,
+    use_responses_api: bool,
+) -> Result<String, ProxyError> {
     match route.provider_type {
         ProviderType::Ollama => {
             let base_url = route.base_url
@@ -77,9 +86,15 @@ pub fn build_backend_url(route: &RouteConfig, model: &str) -> Result<String, Pro
 
         ProviderType::OpenAi => {
             if let Some(url) = &route.url {
+                // If explicit url is provided, use it directly
                 Ok(url.clone())
             } else if let Some(base_url) = &route.base_url {
-                Ok(format!("{}/v1/chat/completions", base_url.trim_end_matches('/')))
+                let endpoint = if use_responses_api {
+                    "/v1/responses"
+                } else {
+                    "/v1/chat/completions"
+                };
+                Ok(format!("{}{}", base_url.trim_end_matches('/'), endpoint))
             } else {
                 Err(ProxyError::ConfigError(
                     format!("OpenAI route for model '{}' missing either url or base_url", model)
@@ -88,11 +103,28 @@ pub fn build_backend_url(route: &RouteConfig, model: &str) -> Result<String, Pro
         }
 
         ProviderType::OpenAiCompatible => {
-            route.url
-                .clone()
-                .ok_or_else(|| ProxyError::ConfigError(
-                    format!("OpenAI-compatible route for model '{}' missing url", model)
-                ))
+            if use_responses_api {
+                // For OpenAI-compatible providers, try to use responses endpoint
+                // Either append to base_url or use url directly
+                if let Some(base_url) = &route.base_url {
+                    Ok(format!("{}/v1/responses", base_url.trim_end_matches('/')))
+                } else if let Some(url) = &route.url {
+                    // Fall back to chat completions if only url is provided
+                    Ok(url.clone())
+                } else {
+                    route.url
+                        .clone()
+                        .ok_or_else(|| ProxyError::ConfigError(
+                            format!("OpenAI-compatible route for model '{}' missing url", model)
+                        ))
+                }
+            } else {
+                route.url
+                    .clone()
+                    .ok_or_else(|| ProxyError::ConfigError(
+                        format!("OpenAI-compatible route for model '{}' missing url", model)
+                    ))
+            }
         }
     }
 }
@@ -1023,6 +1055,179 @@ pub async fn proxy_handler(
         match handle_non_streaming(&state, req, route, backend_url).await {
             Ok(response) => (StatusCode::OK, AxumJson(response)).into_response(),
             Err((status, error)) => (status, error).into_response(),
+        }
+    }
+}
+
+/// Axum handler for POST /v1/responses - OpenAI Responses API endpoint
+pub async fn responses_handler(
+    State(state): State<Arc<ProxyState>>,
+    bytes: Bytes,
+) -> impl IntoResponse {
+    // Check content length limit (100MB)
+    if bytes.len() > 100 * 1024 * 1024 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(json!({ "error": "Request too large, maximum 100MB allowed" }))
+        ).into_response();
+    }
+
+    // Parse Responses API request from body
+    let req: ResponsesRequest = match serde_json::from_slice(&bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("Invalid request body: {}", e) }))
+            ).into_response();
+        }
+    };
+
+    // Trace log the incoming request
+    tracing::trace!(
+        model = %req.model,
+        stream = ?req.stream,
+        "Incoming Responses API request"
+    );
+
+    // Find backend route for requested model
+    let config = state.config.load();
+    let model = req.model.clone();
+    let Some(route) = config.find_backend_for_model(&model) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("No backend route configured for model: {}", model) }))
+        ).into_response();
+    };
+
+    // Determine if we should use native Responses API or convert to Chat Completions
+    // OpenAI and OpenAiCompatible get native Responses API, others get conversion
+    let use_native_responses = matches!(
+        route.provider_type,
+        ProviderType::OpenAi | ProviderType::OpenAiCompatible
+    );
+
+    let is_streaming = req.stream.unwrap_or(false);
+
+    if use_native_responses {
+        // Passthrough mode: send directly to /v1/responses endpoint
+        let backend_url = match build_backend_url_for_endpoint(route, &model, true) {
+            Ok(url) => url,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() }))
+                ).into_response();
+            }
+        };
+
+        // Use the raw request body for passthrough
+        let mut request_builder = state.client.post(backend_url);
+        if let Some(api_key) = &route.api_key {
+            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+        request_builder = request_builder.header("Content-Type", "application/json");
+
+        if is_streaming {
+            // Streaming passthrough
+            let response = request_builder
+                .body(bytes.to_vec())
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    let mut headers = HeaderMap::new();
+                    headers.insert(
+                        "Content-Type",
+                        "text/event-stream".parse().unwrap()
+                    );
+                    headers.insert(
+                        "Cache-Control",
+                        "no-cache".parse().unwrap()
+                    );
+                    headers.insert(
+                        "Connection",
+                        "keep-alive".parse().unwrap()
+                    );
+
+                    let body = Body::from_stream(resp.bytes_stream()
+                        .map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))));
+
+                    (headers, body).into_response()
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let error_text = resp.text().await.unwrap_or_default();
+                    (status, Json(json!({ "error": error_text }))).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("Backend request failed: {}", e) }))
+                ).into_response(),
+            }
+        } else {
+            // Non-streaming passthrough
+            let response = request_builder
+                .body(bytes.to_vec())
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(json_body) => (StatusCode::OK, Json(json_body)).into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": format!("Failed to parse backend response: {}", e) }))
+                        ).into_response(),
+                    }
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let error_text = resp.text().await.unwrap_or_default();
+                    (status, Json(json!({ "error": error_text }))).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("Backend request failed: {}", e) }))
+                ).into_response(),
+            }
+        }
+    } else {
+        // Conversion mode: convert to Chat Completions format
+        let backend_url = match build_backend_url(route, &model) {
+            Ok(url) => url,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() }))
+                ).into_response();
+            }
+        };
+
+        // Convert Responses API request to Chat Completions format
+        let chat_req = convert_responses_to_chat(&req);
+
+        if is_streaming {
+            // Need to wrap the response stream to convert back to Responses API format
+            match handle_streaming(&state, chat_req, route, backend_url).await {
+                Ok(response) => response.into_response(),
+                Err((status, error)) => (status, error).into_response(),
+            }
+        } else {
+            // Convert Chat Completions response back to Responses API format
+            match handle_non_streaming(&state, chat_req, route, backend_url).await {
+                Ok(chat_resp) => {
+                    let created_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let responses_resp = convert_chat_to_responses(&chat_resp, created_at);
+                    (StatusCode::OK, AxumJson(responses_resp)).into_response()
+                }
+                Err((status, error)) => (status, error).into_response(),
+            }
         }
     }
 }

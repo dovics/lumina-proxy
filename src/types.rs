@@ -509,6 +509,191 @@ pub enum ProxyError {
 }
 
 // =============================================================================
+// OpenAI Responses API Types
+// =============================================================================
+
+/// Response input content - can be a simple string or an array of messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResponseInput {
+    String(String),
+    Messages(Vec<OpenAIMessage>),
+}
+
+impl Default for ResponseInput {
+    fn default() -> Self {
+        ResponseInput::String(String::new())
+    }
+}
+
+/// Response usage statistics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResponseUsage {
+    pub input_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens_details: Option<InputTokensDetails>,
+    pub output_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+    pub total_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct InputTokensDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_tokens: Option<u32>,
+    #[serde(default)]
+    pub cached_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_tokens: Option<u32>,
+}
+
+/// Content part in response output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseContentPart {
+    #[serde(rename = "type")]
+    pub content_type: String, // "output_text"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Vec<serde_json::Value>>,
+}
+
+/// Output item in response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseOutputItem {
+    #[serde(rename = "type")]
+    pub output_type: String, // "message"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<ResponseContentPart>>,
+}
+
+/// Reasoning configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseReasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generate_summary: Option<bool>,
+}
+
+/// Text configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseTextConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<serde_json::Value>,
+}
+
+/// Incomplete details for failed responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncompleteDetails {
+    pub reason: String,
+}
+
+/// OpenAI Responses API request
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResponsesRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<ResponseInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ResponseReasoning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<ResponseTextConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<OpenAIToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAITool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<serde_json::Value>,
+}
+
+/// OpenAI Responses API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesResponse {
+    pub id: String,
+    pub object: String,
+    pub created_at: i64,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incomplete_details: Option<IncompleteDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    pub output: Vec<ResponseOutputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<OpenAIToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OpenAITool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<serde_json::Value>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<ResponseTextConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ResponseUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+}
+
+// =============================================================================
 // Token Statistics
 // =============================================================================
 

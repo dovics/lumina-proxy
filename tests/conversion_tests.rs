@@ -5,9 +5,11 @@ use lumina::convert::{
     convert_anthropic_stream_chunk_to_openai,
     convert_openai_to_gemini, convert_gemini_to_openai,
     convert_gemini_stream_chunk_to_openai,
+    convert_responses_to_chat, convert_chat_to_responses,
+    create_response_created_event,
 };
 use lumina::types::{
-    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall, OpenAIToolCallFunction, OpenAIToolFunction,
+    OpenAIChatRequest, OpenAIChatResponse, OpenAIMessage, OpenAIChoice, OpenAITool, OpenAIToolCall, OpenAIToolCallFunction, OpenAIToolFunction,
     OllamaChatResponse, OllamaStreamChunk, OllamaDelta, OllamaMessage,
     AnthropicChatResponse, AnthropicStreamChunk, AnthropicDelta, AnthropicContent, AnthropicUsage,
     GeminiChatResponse, GeminiStreamChunk, GeminiCandidate, GeminiContent, GeminiPart,
@@ -433,4 +435,196 @@ fn test_convert_openai_message_with_tool_to_gemini() {
     let gemini_req = convert_openai_to_gemini(&req);
     // Gemini has tools in contents or generation_config
     assert!(gemini_req.tools.is_some());
+}
+
+// =============================================================================
+// Responses API Conversion Tests
+// =============================================================================
+
+#[test]
+fn test_convert_responses_to_chat_with_string_input() {
+    use lumina::types::*;
+    use lumina::convert::convert_responses_to_chat;
+
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        input: Some(ResponseInput::String("Hello, how are you?".to_string())),
+        temperature: Some(0.7),
+        top_p: Some(0.9),
+        max_output_tokens: Some(100),
+        stream: Some(false),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 1);
+    assert_eq!(chat_req.messages[0].role, "user");
+    assert_eq!(chat_req.messages[0].content, Some("Hello, how are you?".to_string()));
+    assert_eq!(chat_req.temperature, Some(0.7));
+    assert_eq!(chat_req.top_p, Some(0.9));
+    assert_eq!(chat_req.max_tokens, Some(100));
+    assert_eq!(chat_req.stream, Some(false));
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_message_array() {
+    use lumina::types::*;
+    use lumina::convert::convert_responses_to_chat;
+
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        input: Some(ResponseInput::Messages(vec![
+            OpenAIMessage {
+                role: "system".to_string(),
+                content: Some("You are a helpful assistant".to_string()),
+                ..Default::default()
+            },
+            OpenAIMessage {
+                role: "user".to_string(),
+                content: Some("Hello!".to_string()),
+                ..Default::default()
+            },
+        ])),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 2);
+    assert_eq!(chat_req.messages[0].role, "system");
+    assert_eq!(chat_req.messages[1].role, "user");
+    assert_eq!(chat_req.messages[1].content, Some("Hello!".to_string()));
+}
+
+#[test]
+fn test_convert_chat_to_responses() {
+    use lumina::types::*;
+    use lumina::convert::convert_chat_to_responses;
+
+    let chat_resp = OpenAIChatResponse {
+        id: "chatcmpl-123".to_string(),
+        object: "chat.completion".to_string(),
+        created: 1620000000,
+        model: "gpt-4o".to_string(),
+        choices: vec![OpenAIChoice {
+            index: 0,
+            message: Some(OpenAIMessage {
+                role: "assistant".to_string(),
+                content: Some("Hello there!".to_string()),
+                ..Default::default()
+            }),
+            delta: None,
+            finish_reason: Some("stop".to_string()),
+        }],
+        usage: OpenAIUsage {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+        },
+    };
+
+    let responses_resp = convert_chat_to_responses(&chat_resp, 1620000000);
+    assert_eq!(responses_resp.id, "chatcmpl-123");
+    assert_eq!(responses_resp.object, "response");
+    assert_eq!(responses_resp.created_at, 1620000000);
+    assert_eq!(responses_resp.model, "gpt-4o");
+    assert_eq!(responses_resp.status, "completed");
+    assert_eq!(responses_resp.output.len(), 1);
+    assert_eq!(responses_resp.output[0].role, Some("assistant".to_string()));
+
+    let content = &responses_resp.output[0].content.as_ref().unwrap()[0];
+    assert_eq!(content.text, Some("Hello there!".to_string()));
+
+    let usage = responses_resp.usage.unwrap();
+    assert_eq!(usage.input_tokens, 10);
+    assert_eq!(usage.output_tokens, 20);
+    assert_eq!(usage.total_tokens, 30);
+}
+
+#[test]
+fn test_create_response_created_event() {
+    use lumina::convert::create_response_created_event;
+
+    let (event_type, json) = create_response_created_event("resp_123", "gpt-4o", 1620000000);
+    assert_eq!(event_type, "response.created");
+    assert_eq!(json["response"]["id"], "resp_123");
+    assert_eq!(json["response"]["model"], "gpt-4o");
+    assert_eq!(json["response"]["status"], "in_progress");
+}
+
+#[test]
+fn test_responses_request_serialization() {
+    use lumina::types::*;
+
+    let req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        input: Some(ResponseInput::String("Hello".to_string())),
+        temperature: Some(0.7),
+        stream: Some(true),
+        ..Default::default()
+    };
+
+    let json_str = serde_json::to_string(&req).unwrap();
+    let deserialized: ResponsesRequest = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(deserialized.model, "gpt-4o");
+    assert!(matches!(deserialized.input, Some(ResponseInput::String(_))));
+    assert_eq!(deserialized.temperature, Some(0.7));
+    assert_eq!(deserialized.stream, Some(true));
+}
+
+#[test]
+fn test_responses_response_serialization() {
+    use lumina::types::*;
+
+    let resp = ResponsesResponse {
+        id: "resp_123".to_string(),
+        object: "response".to_string(),
+        created_at: 1620000000,
+        model: "gpt-4o".to_string(),
+        error: None,
+        incomplete_details: None,
+        instructions: None,
+        metadata: None,
+        output: vec![ResponseOutputItem {
+            output_type: "message".to_string(),
+            id: Some("msg_0".to_string()),
+            status: Some("completed".to_string()),
+            role: Some("assistant".to_string()),
+            content: Some(vec![ResponseContentPart {
+                content_type: "output_text".to_string(),
+                text: Some("Hello!".to_string()),
+                annotations: None,
+            }]),
+        }],
+        parallel_tool_calls: None,
+        temperature: None,
+        tool_choice: None,
+        tools: None,
+        top_p: None,
+        max_output_tokens: None,
+        previous_response_id: None,
+        reasoning: None,
+        status: "completed".to_string(),
+        text: None,
+        truncation: None,
+        usage: Some(ResponseUsage {
+            input_tokens: 10,
+            input_tokens_details: None,
+            output_tokens: 5,
+            output_tokens_details: None,
+            total_tokens: 15,
+        }),
+        user: None,
+        store: None,
+    };
+
+    let json_str = serde_json::to_string(&resp).unwrap();
+    let deserialized: ResponsesResponse = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(deserialized.id, "resp_123");
+    assert_eq!(deserialized.object, "response");
+    assert_eq!(deserialized.status, "completed");
+    assert_eq!(deserialized.usage.unwrap().total_tokens, 15);
 }

@@ -422,3 +422,183 @@ fn current_timestamp() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
+
+// =============================================================================
+// OpenAI Responses API ↔ Chat Completions Conversion
+// =============================================================================
+
+/// Convert a Responses API request to Chat Completions API request
+pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
+    // Convert input to messages
+    let messages = match &req.input {
+        Some(ResponseInput::String(s)) => vec![OpenAIMessage {
+            role: "user".to_string(),
+            content: Some(s.clone()),
+            ..Default::default()
+        }],
+        Some(ResponseInput::Messages(msgs)) => msgs.clone(),
+        None => vec![],
+    };
+
+    OpenAIChatRequest {
+        model: req.model.clone(),
+        messages,
+        temperature: req.temperature,
+        top_p: req.top_p,
+        max_tokens: req.max_output_tokens,
+        stream: req.stream,
+        tools: req.tools.clone(),
+        tool_choice: req.tool_choice.clone(),
+        ..Default::default()
+    }
+}
+
+/// Convert a Chat Completions response to Responses API format
+pub fn convert_chat_to_responses(
+    resp: &OpenAIChatResponse,
+    created_at: i64,
+) -> ResponsesResponse {
+    // Extract message content from first choice
+    let (content_text, finish_reason) = resp.choices.first().map(|choice| {
+        let text = choice.message.as_ref()
+            .and_then(|m| m.content.clone())
+            .unwrap_or_default();
+        (text, choice.finish_reason.clone())
+    }).unwrap_or_default();
+
+    // Determine status based on finish_reason
+    let status = match finish_reason.as_deref() {
+        Some("stop") | Some("length") | Some("tool_calls") => "completed",
+        _ => "completed",
+    };
+
+    // Convert usage
+    let usage = ResponseUsage {
+        input_tokens: resp.usage.prompt_tokens,
+        input_tokens_details: None,
+        output_tokens: resp.usage.completion_tokens,
+        output_tokens_details: None,
+        total_tokens: resp.usage.total_tokens,
+    };
+
+    ResponsesResponse {
+        id: resp.id.clone(),
+        object: "response".to_string(),
+        created_at,
+        model: resp.model.clone(),
+        error: None,
+        incomplete_details: None,
+        instructions: None,
+        metadata: None,
+        output: vec![ResponseOutputItem {
+            output_type: "message".to_string(),
+            id: Some("msg_0".to_string()),
+            status: Some("completed".to_string()),
+            role: Some("assistant".to_string()),
+            content: Some(vec![ResponseContentPart {
+                content_type: "output_text".to_string(),
+                text: Some(content_text),
+                annotations: None,
+            }]),
+        }],
+        parallel_tool_calls: None,
+        temperature: None,
+        tool_choice: None,
+        tools: None,
+        top_p: None,
+        max_output_tokens: None,
+        previous_response_id: None,
+        reasoning: None,
+        status: status.to_string(),
+        text: None,
+        truncation: None,
+        usage: Some(usage),
+        user: None,
+        store: None,
+    }
+}
+
+/// Convert streaming Chat Completions chunk to Responses API format
+/// Returns the event type and JSON data
+pub fn convert_chat_stream_chunk_to_responses(
+    chunk: &OpenAIStreamChunk,
+    created_at: i64,
+) -> Vec<(String, serde_json::Value)> {
+    let mut events = Vec::new();
+
+    // Send response.created event first (only for first chunk)
+    // Note: We can't track if this is the first chunk here,
+    // so this needs to be handled at the caller level
+
+    // Extract delta content
+    for choice in &chunk.choices {
+        if let Some(ref content) = choice.delta.content {
+            if !content.is_empty() {
+                // output_text.delta event
+                let delta_event = serde_json::json!({
+                    "type": "response.output_text.delta",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": {
+                        "type": "text",
+                        "text": content
+                    },
+                    "created_at": created_at
+                });
+                events.push(("response.output_text.delta".to_string(), delta_event));
+            }
+        }
+
+        // If finish_reason, send response.completed event
+        if let Some(_finish_reason) = &choice.finish_reason {
+            let completed_event = serde_json::json!({
+                "type": "response.completed",
+                "created_at": created_at
+            });
+            events.push(("response.completed".to_string(), completed_event));
+        }
+    }
+
+    events
+}
+
+/// Create initial response.created event for streaming
+pub fn create_response_created_event(
+    id: &str,
+    model: &str,
+    created_at: i64,
+) -> (String, serde_json::Value) {
+    let event = serde_json::json!({
+        "type": "response.created",
+        "response": {
+            "id": id,
+            "object": "response",
+            "created_at": created_at,
+            "model": model,
+            "status": "in_progress",
+            "output": [],
+            "usage": {}
+        }
+    });
+    ("response.created".to_string(), event)
+}
+
+/// Create response.output_item.done event
+pub fn create_response_output_item_done_event(
+    id: &str,
+    created_at: i64,
+) -> (String, serde_json::Value) {
+    let event = serde_json::json!({
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+            "id": id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": []
+        },
+        "created_at": created_at
+    });
+    ("response.output_item.done".to_string(), event)
+}
