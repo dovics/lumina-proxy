@@ -31,7 +31,7 @@ statistics:
 # 路由配置
 routes:
   - model_name: "gpt-4o"
-    provider_type: "openai"          # openai | ollama | anthropic | gemini | openai-compatible
+    provider_type: "openai"          # openai | ollama | anthropic | gemini | moonlight | openai-compatible
     base_url: "https://api.openai.com"
     api_key: "sk-xxxx"
     enabled: true
@@ -58,6 +58,13 @@ routes:
     provider_type: "ollama"
     base_url: "http://localhost:11434"  # Ollama 填写 base URL，自动拼接 /api/chat
     api_key: "ollama"                     # Ollama 本地通常不需要，可填任意值
+    enabled: true
+
+  # Moonlight (月光) API example
+  - model_name: "your-moonlight-model"
+    provider_type: "moonlight"
+    url: "https://api.moonlight.example.com/v1/chat/completions"
+    api_key: "your-moonlight-api-key"
     enabled: true
 
   # Example with model alias: client requests "gpt-4o", proxy sends "gpt-4o-2024-08-06" to upstream
