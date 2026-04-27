@@ -30,6 +30,10 @@ pub struct OpenAIChatRequest {
     pub tools: Option<Vec<OpenAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<OpenAIToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 /// A single message in an OpenAI chat conversation
@@ -111,12 +115,15 @@ pub struct OpenAIFunctionCall {
 
 /// Function specification for a tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct OpenAIToolFunction {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
 }
 
 /// Tool definition in request
@@ -124,7 +131,8 @@ pub struct OpenAIToolFunction {
 pub struct OpenAITool {
     pub id: Option<String>,
     pub r#type: String, // always "function"
-    pub function: OpenAIToolFunction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<OpenAIToolFunction>,
 }
 
 /// Tool choice - can be string or object
@@ -512,12 +520,14 @@ pub enum ProxyError {
 // OpenAI Responses API Types
 // =============================================================================
 
-/// Response input content - can be a simple string or an array of messages
+/// Response input content - can be a simple string, an array of messages,
+/// or any other complex structure supported by the Responses API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ResponseInput {
     String(String),
     Messages(Vec<OpenAIMessage>),
+    Raw(serde_json::Value),
 }
 
 impl Default for ResponseInput {

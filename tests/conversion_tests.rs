@@ -375,8 +375,9 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -384,7 +385,7 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -409,8 +410,9 @@ fn test_convert_openai_message_with_tool_to_anthropic() {
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -418,7 +420,7 @@ fn test_convert_openai_message_with_tool_to_anthropic() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -443,8 +445,9 @@ fn test_convert_openai_message_with_tool_to_gemini() {
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -452,7 +455,7 @@ fn test_convert_openai_message_with_tool_to_gemini() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -523,6 +526,80 @@ fn test_convert_responses_to_chat_with_message_array() {
     assert_eq!(chat_req.messages[0].role, "system");
     assert_eq!(chat_req.messages[1].role, "user");
     assert_eq!(chat_req.messages[1].content, Some("Hello!".to_string()));
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_raw_json_input() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+    use serde_json::json;
+
+    // Test with complex raw JSON input (array format)
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        input: Some(ResponseInput::Raw(json!([
+            {"role": "user", "content": "Hello from raw JSON!"}
+        ]))),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 1);
+    assert_eq!(chat_req.messages[0].role, "user");
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_instructions() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+
+    // Test with instructions (should become system message) and string input
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        instructions: Some("You are a helpful coding assistant".to_string()),
+        input: Some(ResponseInput::String("Hello, how are you?".to_string())),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 2);
+    // Instructions should be first message as system role
+    assert_eq!(chat_req.messages[0].role, "system");
+    assert_eq!(
+        chat_req.messages[0].content,
+        Some("You are a helpful coding assistant".to_string())
+    );
+    // Input should be second message as user role
+    assert_eq!(chat_req.messages[1].role, "user");
+    assert_eq!(
+        chat_req.messages[1].content,
+        Some("Hello, how are you?".to_string())
+    );
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_instructions_only() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+
+    // Test with instructions only (no input)
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        instructions: Some("You are a helpful assistant".to_string()),
+        input: None,
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 1);
+    assert_eq!(chat_req.messages[0].role, "system");
+    assert_eq!(
+        chat_req.messages[0].content,
+        Some("You are a helpful assistant".to_string())
+    );
 }
 
 #[test]

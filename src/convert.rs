@@ -25,12 +25,13 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| OllamaTool {
                 type_: "function".to_string(),
                 function: OllamaToolFunction {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone(),
-                    parameters: t.function.parameters.clone(),
+                    name: t.function.as_ref().unwrap().name.clone(),
+                    description: t.function.as_ref().unwrap().description.clone(),
+                    parameters: t.function.as_ref().unwrap().parameters.clone(),
                 },
             })
             .collect()
@@ -142,11 +143,14 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| AnthropicTool {
-                name: t.function.name.clone(),
-                description: t.function.description.clone(),
+                name: t.function.as_ref().unwrap().name.clone(),
+                description: t.function.as_ref().unwrap().description.clone(),
                 input_schema: t
                     .function
+                    .as_ref()
+                    .unwrap()
                     .parameters
                     .clone()
                     .unwrap_or(serde_json::json!({})),
@@ -310,11 +314,12 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| GeminiTool {
                 function_declarations: vec![GeminiFunctionDeclaration {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone(),
-                    parameters: t.function.parameters.clone(),
+                    name: t.function.as_ref().unwrap().name.clone(),
+                    description: t.function.as_ref().unwrap().description.clone(),
+                    parameters: t.function.as_ref().unwrap().parameters.clone(),
                 }],
             })
             .collect()
@@ -470,16 +475,80 @@ fn current_timestamp() -> u64 {
 
 /// Convert a Responses API request to Chat Completions API request
 pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
+    let mut messages = Vec::new();
+
+    // Add instructions as system message first
+    if let Some(instructions) = &req.instructions {
+        messages.push(OpenAIMessage {
+            role: "system".to_string(),
+            content: Some(instructions.clone()),
+            ..Default::default()
+        });
+    }
+
     // Convert input to messages
-    let messages = match &req.input {
-        Some(ResponseInput::String(s)) => vec![OpenAIMessage {
+    match &req.input {
+        Some(ResponseInput::String(s)) => messages.push(OpenAIMessage {
             role: "user".to_string(),
             content: Some(s.clone()),
             ..Default::default()
-        }],
-        Some(ResponseInput::Messages(msgs)) => msgs.clone(),
-        None => vec![],
+        }),
+        Some(ResponseInput::Messages(msgs)) => messages.extend(msgs.clone()),
+        Some(ResponseInput::Raw(value)) => {
+            // Try to parse raw JSON as an array of messages
+            if let Some(arr) = value.as_array() {
+                let parsed_messages: Vec<OpenAIMessage> = arr
+                    .iter()
+                    .map(|v| {
+                        // Try to deserialize each item as OpenAIMessage
+                        serde_json::from_value(v.clone()).unwrap_or_else(|_| {
+                            // Fallback: create a simple user message
+                            OpenAIMessage {
+                                role: "user".to_string(),
+                                content: Some(v.to_string()),
+                                ..Default::default()
+                            }
+                        })
+                    })
+                    .collect();
+                messages.extend(parsed_messages);
+            } else {
+                // Not an array - create a single message with string representation
+                messages.push(OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(value.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+        None => {}
     };
+
+    // Filter out tools without function field and ensure parameters has type: "object"
+    let tools = req.tools.as_ref().map(|tools| {
+        tools
+            .iter()
+            .filter(|t| t.function.is_some())
+            .map(|t| {
+                let mut tool = t.clone();
+                if let Some(ref mut function) = tool.function
+                    && let Some(ref mut params) = function.parameters
+                    && params.is_object()
+                    && !params.as_object().unwrap().contains_key("type")
+                    && let Some(obj) = params.as_object_mut()
+                {
+                    obj.insert("type".to_string(), serde_json::Value::String("object".to_string()));
+                }
+                tool
+            })
+            .collect()
+    });
+
+    // Convert text.format to response_format
+    let response_format = req.text.as_ref().and_then(|t| t.format.clone());
+
+    // Extract reasoning_effort from reasoning
+    let reasoning_effort = req.reasoning.as_ref().and_then(|r| r.effort.clone());
 
     OpenAIChatRequest {
         model: req.model.clone(),
@@ -488,8 +557,10 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
         top_p: req.top_p,
         max_tokens: req.max_output_tokens,
         stream: req.stream,
-        tools: req.tools.clone(),
+        tools,
         tool_choice: req.tool_choice.clone(),
+        response_format,
+        reasoning_effort,
         ..Default::default()
     }
 }
@@ -566,40 +637,49 @@ pub fn convert_chat_to_responses(resp: &OpenAIChatResponse, created_at: i64) -> 
 /// Returns the event type and JSON data
 pub fn convert_chat_stream_chunk_to_responses(
     chunk: &OpenAIStreamChunk,
+    response_id: &str,
     created_at: i64,
 ) -> Vec<(String, serde_json::Value)> {
     let mut events = Vec::new();
+    let item_id_prefix = &response_id[0..std::cmp::min(8, response_id.len())];
 
-    // Send response.created event first (only for first chunk)
-    // Note: We can't track if this is the first chunk here,
-    // so this needs to be handled at the caller level
-
-    // Extract delta content
     for choice in &chunk.choices {
+        // Handle text content delta
         if let Some(ref content) = choice.delta.content
             && !content.is_empty()
         {
-            // output_text.delta event
             let delta_event = serde_json::json!({
                 "type": "response.output_text.delta",
+                "item_id": format!("item_{}", item_id_prefix),
                 "output_index": 0,
                 "content_index": 0,
-                "delta": {
-                    "type": "text",
-                    "text": content
-                },
+                "delta": content,
                 "created_at": created_at
             });
             events.push(("response.output_text.delta".to_string(), delta_event));
         }
 
-        // If finish_reason, send response.completed event
-        if let Some(_finish_reason) = &choice.finish_reason {
-            let completed_event = serde_json::json!({
-                "type": "response.completed",
-                "created_at": created_at
-            });
-            events.push(("response.completed".to_string(), completed_event));
+        // Handle tool calls delta
+        if let Some(ref tool_calls) = choice.delta.tool_calls {
+            for tool_call in tool_calls {
+                let call_index = tool_call.index.unwrap_or(0);
+                let output_index = call_index + 1;  // +1 because text is index 0
+                if let Some(ref function) = tool_call.function {
+                    // Send function call arguments delta
+                    if let Some(ref args) = function.arguments
+                        && !args.is_empty()
+                    {
+                        let delta_event = serde_json::json!({
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": format!("func_{}_{}", item_id_prefix, output_index),
+                            "output_index": output_index,
+                            "delta": args,
+                            "created_at": created_at
+                        });
+                        events.push(("response.function_call_arguments.delta".to_string(), delta_event));
+                    }
+                }
+            }
         }
     }
 
@@ -645,4 +725,14 @@ pub fn create_response_output_item_done_event(
         "created_at": created_at
     });
     ("response.output_item.done".to_string(), event)
+}
+
+/// Format a Responses API event as SSE line
+pub fn format_responses_sse_event(event_type: &str, data: &serde_json::Value) -> String {
+    format!("event: {}\ndata: {}\n\n", event_type, serde_json::to_string(data).unwrap())
+}
+
+/// Format the final [DONE] SSE line
+pub fn format_responses_sse_done() -> String {
+    "data: [DONE]\n\n".to_string()
 }

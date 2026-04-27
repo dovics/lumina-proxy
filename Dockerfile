@@ -6,7 +6,9 @@ RUN apk add --no-cache \
     musl-dev \
     pkgconfig \
     make \
-    gcc
+    gcc \
+    openssl-dev \
+    perl
 
 WORKDIR /app
 
