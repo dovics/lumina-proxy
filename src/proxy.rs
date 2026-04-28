@@ -223,42 +223,106 @@ fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
 ///
 /// Tool ID format: `functions.{func_name}:{idx}`
 ///
-/// Note: This function is lenient and can parse tool calls even if section markers are incomplete.
+/// Note: This function handles multiple format variations:
+/// 1. Full format with section and call wrappers
+/// 2. Only <|tool_call_argument_begin|> and <|tool_calls_section_end|> markers
 pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
     let mut tool_calls = Vec::new();
 
-    // Try to find section boundaries first
-    let (section_start, section_end) =
-        if let Some(start) = content.find("<|tool_calls_section_begin|>") {
-            let end = content
-                .find("<|tool_calls_section_end|>")
-                .unwrap_or(content.len());
-            (start + "<|tool_calls_section_begin|>".len(), end)
-        } else {
-            // No section markers - try to parse individual tool calls directly
-            (0, content.len())
-        };
+    // Check if we have the full format with <|tool_call_begin|> wrappers
+    if content.contains("<|tool_call_begin|>") {
+        // Full format: parse with section and call wrappers
+        let (section_start, section_end) =
+            if let Some(start) = content.find("<|tool_calls_section_begin|>") {
+                let end = content
+                    .find("<|tool_calls_section_end|>")
+                    .unwrap_or(content.len());
+                (start + "<|tool_calls_section_begin|>".len(), end)
+            } else {
+                (0, content.len())
+            };
 
-    let section_content = &content[section_start..section_end];
-    let mut index: u32 = 0;
+        let section_content = &content[section_start..section_end];
+        let mut index: u32 = 0;
 
-    // Parse each tool call
-    let mut remaining = section_content;
-    while let Some(call_start) = remaining.find("<|tool_call_begin|>") {
-        let after_call_start = &remaining[call_start + "<|tool_call_begin|>".len()..];
-        if let Some(call_end) = after_call_start.find("<|tool_call_end|>") {
-            let call_content = &after_call_start[..call_end];
-            if let Some(tool_call) = extract_moonlight_tool_call(call_content, index) {
-                tool_calls.push(tool_call);
-                index += 1;
+        let mut remaining = section_content;
+        while let Some(call_start) = remaining.find("<|tool_call_begin|>") {
+            let after_call_start = &remaining[call_start + "<|tool_call_begin|>".len()..];
+            if let Some(call_end) = after_call_start.find("<|tool_call_end|>") {
+                let call_content = &after_call_start[..call_end];
+                if let Some(tool_call) = extract_moonlight_tool_call(call_content, index) {
+                    tool_calls.push(tool_call);
+                    index += 1;
+                }
+                remaining = &after_call_start[call_end + "<|tool_call_end|>".len()..];
+            } else {
+                break;
             }
-            remaining = &after_call_start[call_end + "<|tool_call_end|>".len()..];
-        } else {
-            break;
+        }
+    } else if content.contains("<|tool_call_argument_begin|>") {
+        // Simplified format: just <|tool_call_argument_begin|> and <|tool_calls_section_end|>
+        // Format: functions.{func_name}:{idx} <|tool_call_argument_begin|> {args} <|tool_calls_section_end|>
+
+        // Find the section end first
+        let section_end = content
+            .find("<|tool_calls_section_end|>")
+            .unwrap_or(content.len());
+
+        // Find <|tool_call_argument_begin|>
+        if let Some(arg_pos) = content.find("<|tool_call_argument_begin|>") {
+            let before_arg = &content[0..arg_pos];
+            let after_arg = &content[arg_pos + "<|tool_call_argument_begin|>".len()..section_end];
+
+            // before_arg should be like "functions.shell:0" or "functions.shell:0 "
+            let tool_id = before_arg.trim();
+            let arguments = after_arg.trim();
+
+            if let Some(tool_call) =
+                extract_moonlight_tool_call_from_id_and_args(tool_id, arguments, 0)
+            {
+                tool_calls.push(tool_call);
+            }
         }
     }
 
     tool_calls
+}
+
+/// Extract a single tool call from a tool ID and arguments string
+fn extract_moonlight_tool_call_from_id_and_args(
+    tool_id: &str,
+    arguments: &str,
+    index: u32,
+) -> Option<OpenAIToolCall> {
+    // Parse function name from tool ID (format: functions.{func_name}:{idx})
+    let func_name = if let Some(stripped) = tool_id.strip_prefix("functions.") {
+        match stripped.rfind(':') {
+            Some(pos) => &stripped[..pos],
+            None => {
+                tracing::warn!("Malformed tool ID '{}': missing colon separator", tool_id);
+                return None;
+            }
+        }
+    } else {
+        tracing::warn!(
+            "Malformed tool ID '{}': missing 'functions.' prefix",
+            tool_id
+        );
+        return None;
+    };
+
+    // Generate a random ID
+    let id = format!("call_{}", generate_random_id());
+
+    Some(OpenAIToolCall {
+        index: Some(index),
+        id: Some(id),
+        r#type: Some("function".to_string()),
+        function: Some(OpenAIToolCallFunction {
+            name: Some(func_name.to_string()),
+            arguments: Some(arguments.to_string()),
+        }),
+    })
 }
 
 /// Extract a single tool call from a Moonlight tool call segment
