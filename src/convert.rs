@@ -664,6 +664,11 @@ pub fn convert_chat_stream_chunk_to_responses(
 
         // Handle tool calls delta
         if let Some(ref tool_calls) = choice.delta.tool_calls {
+            tracing::debug!(
+                "convert_chat_stream_chunk_to_responses: processing {} tool_calls, chunk_id={}",
+                tool_calls.len(),
+                chunk.id
+            );
             for tool_call in tool_calls {
                 let call_index = tool_call.index.unwrap_or(0);
                 let output_index = call_index + 1; // +1 because text is index 0
@@ -673,9 +678,18 @@ pub fn convert_chat_stream_chunk_to_responses(
                     .clone()
                     .unwrap_or_else(|| format!("call_{}", item_id_prefix));
 
+                tracing::debug!(
+                    "convert_chat_stream_chunk_to_responses: tool_call call_index={}, func_item_id={}, call_id={}",
+                    call_index, func_item_id, call_id
+                );
+
                 if let Some(ref function) = tool_call.function {
                     // Send initial function_call event if function name is present
                     if let Some(ref name) = function.name {
+                        tracing::debug!(
+                            "convert_chat_stream_chunk_to_responses: emitting response.function_call event, name={}",
+                            name
+                        );
                         let func_event = serde_json::json!({
                             "type": "response.function_call",
                             "output_index": output_index,
@@ -695,6 +709,10 @@ pub fn convert_chat_stream_chunk_to_responses(
                     if let Some(ref args) = function.arguments
                         && !args.is_empty()
                     {
+                        tracing::debug!(
+                            "convert_chat_stream_chunk_to_responses: emitting response.function_call_arguments.delta event, args_len={}",
+                            args.len()
+                        );
                         let delta_event = serde_json::json!({
                             "type": "response.function_call_arguments.delta",
                             "item_id": func_item_id,
@@ -710,6 +728,14 @@ pub fn convert_chat_stream_chunk_to_responses(
                 }
             }
         }
+    }
+
+    if !events.is_empty() {
+        tracing::debug!(
+            "convert_chat_stream_chunk_to_responses: returning {} events for chunk_id={}",
+            events.len(),
+            chunk.id
+        );
     }
 
     events
