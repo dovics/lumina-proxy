@@ -36,12 +36,47 @@ pub struct OpenAIChatRequest {
     pub reasoning_effort: Option<String>,
 }
 
+/// Content can be a string or an array of content parts (multi-modal format).
+/// When array format is received, it's flattened to a single string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    String(String),
+    Array(Vec<serde_json::Value>),
+}
+
+impl MessageContent {
+    pub fn as_string(&self) -> String {
+        match self {
+            MessageContent::String(s) => s.clone(),
+            MessageContent::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join(" "),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MessageContent::String(s) => s.is_empty(),
+            MessageContent::Array(arr) => arr.is_empty(),
+        }
+    }
+}
+
+impl Default for MessageContent {
+    fn default() -> Self {
+        MessageContent::String(String::new())
+    }
+}
+
 /// A single message in an OpenAI chat conversation
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenAIMessage {
     pub role: String,
     #[serde(default)]
-    pub content: Option<String>,
+    pub content: Option<MessageContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

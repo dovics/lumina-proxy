@@ -446,7 +446,8 @@ pub async fn handle_streaming(
                                                         // Note: text_only is intentionally not used because when tool_calls are present,
                                                         // the content field should be None to avoid polluting the response
                                                         // with tool ID strings like "shell:0"
-                                                        let _text_only = strip_moonlight_tool_markers(buf);
+                                                        let _text_only =
+                                                            strip_moonlight_tool_markers(buf);
 
                                                         let first_tc = &parsed[0];
                                                         let content_for_chunk: Option<String> =

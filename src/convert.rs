@@ -13,7 +13,7 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
         .messages
         .iter()
         .map(|m| {
-            let content = m.content.clone().unwrap_or_default();
+            let content = m.content.clone().unwrap_or_default().as_string();
             OllamaMessage {
                 role: m.role.clone(),
                 content,
@@ -62,7 +62,7 @@ pub fn convert_ollama_to_openai(resp: &OllamaChatResponse, model: &str) -> OpenA
             index: 0,
             message: Some(OpenAIMessage {
                 role: resp.message.role.clone(),
-                content: Some(resp.message.content.clone()),
+                content: Some(MessageContent::String(resp.message.content.clone())),
                 ..Default::default()
             }),
             delta: None,
@@ -127,11 +127,11 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     // Extract system message to top-level system field as required by Anthropic API
     for msg in &req.messages {
         if msg.role == "system" && system.is_none() {
-            system = Some(msg.content.clone().unwrap_or_default());
+            system = Some(msg.content.clone().unwrap_or_default().as_string());
         } else {
             messages.push(AnthropicMessage {
                 role: msg.role.clone(),
-                content: msg.content.clone().unwrap_or_default(),
+                content: msg.content.clone().unwrap_or_default().as_string(),
             });
         }
     }
@@ -201,7 +201,7 @@ pub fn convert_anthropic_to_openai(
             index: 0,
             message: Some(OpenAIMessage {
                 role: "assistant".to_string(),
-                content: Some(content),
+                content: Some(MessageContent::String(content)),
                 ..Default::default()
             }),
             delta: None,
@@ -273,12 +273,12 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
                     text: None,
                     function_response: Some(GeminiFunctionResponse {
                         name: m.name.clone().unwrap_or_default(),
-                        response: m.content.clone().unwrap_or_default(),
+                        response: m.content.clone().unwrap_or_default().as_string(),
                     }),
                 }]
             } else {
                 vec![GeminiPart {
-                    text: m.content.clone(),
+                    text: m.content.clone().map(|c| c.as_string()),
                     function_response: None,
                 }]
             };
@@ -371,7 +371,7 @@ pub fn convert_gemini_to_openai(
                 index: idx as u32,
                 message: Some(OpenAIMessage {
                     role: "assistant".to_string(),
-                    content: Some(content),
+                    content: Some(MessageContent::String(content)),
                     ..Default::default()
                 }),
                 delta: None,
@@ -481,7 +481,7 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
     if let Some(instructions) = &req.instructions {
         messages.push(OpenAIMessage {
             role: "system".to_string(),
-            content: Some(instructions.clone()),
+            content: Some(MessageContent::String(instructions.clone())),
             ..Default::default()
         });
     }
@@ -490,7 +490,7 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
     match &req.input {
         Some(ResponseInput::String(s)) => messages.push(OpenAIMessage {
             role: "user".to_string(),
-            content: Some(s.clone()),
+            content: Some(MessageContent::String(s.clone())),
             ..Default::default()
         }),
         Some(ResponseInput::Messages(msgs)) => messages.extend(msgs.clone()),
@@ -505,7 +505,7 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
                             // Fallback: create a simple user message
                             OpenAIMessage {
                                 role: "user".to_string(),
-                                content: Some(v.to_string()),
+                                content: Some(MessageContent::String(v.to_string())),
                                 ..Default::default()
                             }
                         })
@@ -516,7 +516,7 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
                 // Not an array - create a single message with string representation
                 messages.push(OpenAIMessage {
                     role: "user".to_string(),
-                    content: Some(value.to_string()),
+                    content: Some(MessageContent::String(value.to_string())),
                     ..Default::default()
                 });
             }
@@ -615,7 +615,7 @@ pub fn convert_chat_to_responses(resp: &OpenAIChatResponse, created_at: i64) -> 
             role: Some("assistant".to_string()),
             content: Some(vec![ResponseContentPart {
                 content_type: "output_text".to_string(),
-                text: Some(content_text),
+                text: Some(content_text.as_string()),
                 annotations: None,
             }]),
         }],
@@ -680,7 +680,9 @@ pub fn convert_chat_stream_chunk_to_responses(
 
                 tracing::debug!(
                     "convert_chat_stream_chunk_to_responses: tool_call call_index={}, func_item_id={}, call_id={}",
-                    call_index, func_item_id, call_id
+                    call_index,
+                    func_item_id,
+                    call_id
                 );
 
                 if let Some(ref function) = tool_call.function {

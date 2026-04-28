@@ -21,8 +21,12 @@ pub fn count_prompt_tokens(req: &OpenAIChatRequest) -> usize {
 
     // Count tokens from each message's content
     for message in &req.messages {
-        let content = message.content.as_deref().unwrap_or("");
-        let tokens = tokenizer.encode_with_special_tokens(content);
+        let content = message
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .unwrap_or_default();
+        let tokens = tokenizer.encode_with_special_tokens(&content);
         total_tokens += tokens.len();
     }
 
@@ -62,12 +66,12 @@ impl IncrementalTokenCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::OpenAIMessage;
+    use crate::types::{MessageContent, OpenAIMessage};
 
     fn openai_message(role: &str, content: &str) -> OpenAIMessage {
         OpenAIMessage {
             role: role.to_string(),
-            content: Some(content.to_string()),
+            content: Some(MessageContent::String(content.to_string())),
             ..Default::default()
         }
     }

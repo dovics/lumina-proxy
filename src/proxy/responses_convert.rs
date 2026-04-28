@@ -246,7 +246,10 @@ pub fn convert_chat_sse_to_responses_sse(
                                                 debug_tool_call_events.push(format!(
                                                     "function_call event: name={}, call_id={}",
                                                     name,
-                                                    tool_call.id.as_ref().unwrap_or(&"<none>".to_string())
+                                                    tool_call
+                                                        .id
+                                                        .as_ref()
+                                                        .unwrap_or(&"<none>".to_string())
                                                 ));
                                             }
                                             if let Some(ref args) = function.arguments {
@@ -286,9 +289,10 @@ pub fn convert_chat_sse_to_responses_sse(
 
                             // Check if this is a final chunk with finish_reason == "tool_calls"
                             // In this case, we need to send the completion events
-                            let is_tool_calls_final = chunk.choices.iter().any(|c| {
-                                c.finish_reason.as_deref() == Some("tool_calls")
-                            });
+                            let is_tool_calls_final = chunk
+                                .choices
+                                .iter()
+                                .any(|c| c.finish_reason.as_deref() == Some("tool_calls"));
 
                             if is_tool_calls_final && !completed_sent {
                                 tracing::debug!(
@@ -311,8 +315,10 @@ pub fn convert_chat_sse_to_responses_sse(
                                         },
                                         "created_at": created_at
                                     });
-                                    let done_line =
-                                        format_responses_sse_event("response.output_item.done", &done_event);
+                                    let done_line = format_responses_sse_event(
+                                        "response.output_item.done",
+                                        &done_event,
+                                    );
                                     sse_output.push_str(&done_line);
                                 }
 
@@ -334,8 +340,10 @@ pub fn convert_chat_sse_to_responses_sse(
                                         }
                                     }
                                 });
-                                let completed_line =
-                                    format_responses_sse_event("response.completed", &completed_event);
+                                let completed_line = format_responses_sse_event(
+                                    "response.completed",
+                                    &completed_event,
+                                );
                                 sse_output.push_str(&completed_line);
 
                                 // Mark as completed so we don't send these again
