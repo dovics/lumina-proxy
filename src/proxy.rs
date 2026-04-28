@@ -222,19 +222,22 @@ fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
 /// - `<|tool_call_argument_begin|>` - separates tool ID from arguments
 ///
 /// Tool ID format: `functions.{func_name}:{idx}`
+///
+/// Note: This function is lenient and can parse tool calls even if section markers are incomplete.
 pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
     let mut tool_calls = Vec::new();
 
-    // Find the tool calls section
-    let section_start = match content.find("<|tool_calls_section_begin|>") {
-        Some(pos) => pos + "<|tool_calls_section_begin|>".len(),
-        None => return tool_calls, // No tool calls section
-    };
-
-    let section_end = match content.find("<|tool_calls_section_end|>") {
-        Some(pos) => pos,
-        None => return tool_calls, // Malformed, no end marker
-    };
+    // Try to find section boundaries first
+    let (section_start, section_end) =
+        if let Some(start) = content.find("<|tool_calls_section_begin|>") {
+            let end = content
+                .find("<|tool_calls_section_end|>")
+                .unwrap_or(content.len());
+            (start + "<|tool_calls_section_begin|>".len(), end)
+        } else {
+            // No section markers - try to parse individual tool calls directly
+            (0, content.len())
+        };
 
     let section_content = &content[section_start..section_end];
     let mut index: u32 = 0;
@@ -974,9 +977,17 @@ async fn handle_streaming(
                                         if let Some(content) = &choice.delta.content {
                                             let content_str = content.as_str();
 
-                                            // Check for tool call section markers
-                                            if content_str.contains("<|tool_calls_section_begin|>")
-                                            {
+                                            // Check for tool call markers (section or individual)
+                                            // Handle cases where section markers may be incomplete
+                                            let has_tool_call_markers = content_str
+                                                .contains("<|tool_calls_section_begin|>")
+                                                || content_str.contains("<|tool_call_begin|>")
+                                                || content_str.contains("<|tool_call_end|>")
+                                                || content_str
+                                                    .contains("<|tool_calls_section_end|>");
+
+                                            if has_tool_call_markers {
+                                                // Try to parse with full section markers first
                                                 let parsed =
                                                     parse_moonlight_tool_calls(content_str);
                                                 let text_only =
@@ -1095,6 +1106,10 @@ async fn handle_streaming(
                                                 } else if !text_only.is_empty() {
                                                     counter.add_delta(&text_only);
                                                     choice.delta.content = Some(text_only);
+                                                    has_content = true;
+                                                } else {
+                                                    // Content was only tool call markers - clear them
+                                                    choice.delta.content = None;
                                                     has_content = true;
                                                 }
                                             } else {
