@@ -1070,6 +1070,7 @@ async fn handle_streaming(
                         ProviderType::Moonlight => {
                             // Moonlight: parse tool calls from content markers
                             // Output as OpenAI streaming SSE format
+                            tracing::debug!("Moonlight: raw data = {}", data);
                             match serde_json::from_str::<OpenAIStreamChunk>(data) {
                                 Ok(mut openai_chunk) => {
                                     let mut has_content = false;
@@ -1078,6 +1079,10 @@ async fn handle_streaming(
                                     for choice in &mut openai_chunk.choices {
                                         if let Some(content) = &choice.delta.content {
                                             let content_str = content.as_str();
+                                            tracing::debug!(
+                                                "Moonlight: choice delta content = {:?}",
+                                                content_str
+                                            );
 
                                             // Check for tool call markers (section or individual)
                                             // Handle cases where section markers may be incomplete
@@ -1087,6 +1092,11 @@ async fn handle_streaming(
                                                 || content_str.contains("<|tool_call_end|>")
                                                 || content_str
                                                     .contains("<|tool_calls_section_end|>");
+
+                                            tracing::debug!(
+                                                "Moonlight: has_tool_call_markers = {}, checking markers...",
+                                                has_tool_call_markers
+                                            );
 
                                             if has_tool_call_markers {
                                                 tracing::debug!(
@@ -1223,6 +1233,10 @@ async fn handle_streaming(
                                                     has_content = true;
                                                 }
                                             } else {
+                                                tracing::debug!(
+                                                    "Moonlight: NO tool call markers found in content, treating as regular text: {}",
+                                                    content_str
+                                                );
                                                 counter.add_delta(content_str);
                                                 has_content = true;
                                             }
@@ -1280,9 +1294,13 @@ async fn handle_streaming(
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::warn!("Failed to parse Moonlight stream chunk: {}", e);
+                                    tracing::warn!(
+                                        "Moonlight: Failed to parse as OpenAIStreamChunk: {}, raw data={}",
+                                        e,
+                                        data
+                                    );
                                     StreamChunkResult::Error(format!(
-                                        "Failed to parse Moonlight stream chunk: {}",
+                                        "Moonlight: Failed to parse as OpenAIStreamChunk: {}",
                                         e
                                     ))
                                 }
