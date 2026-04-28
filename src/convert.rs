@@ -667,14 +667,37 @@ pub fn convert_chat_stream_chunk_to_responses(
             for tool_call in tool_calls {
                 let call_index = tool_call.index.unwrap_or(0);
                 let output_index = call_index + 1; // +1 because text is index 0
+                let func_item_id = format!("func_{}_{}", item_id_prefix, output_index);
+                let call_id = tool_call
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("call_{}", item_id_prefix));
+
                 if let Some(ref function) = tool_call.function {
+                    // Send initial function_call event if function name is present
+                    if let Some(ref name) = function.name {
+                        let func_event = serde_json::json!({
+                            "type": "response.function_call",
+                            "output_index": output_index,
+                            "item": {
+                                "id": func_item_id,
+                                "type": "function_call",
+                                "name": name,
+                                "call_id": call_id,
+                                "arguments": ""
+                            },
+                            "created_at": created_at
+                        });
+                        events.push(("response.function_call".to_string(), func_event));
+                    }
+
                     // Send function call arguments delta
                     if let Some(ref args) = function.arguments
                         && !args.is_empty()
                     {
                         let delta_event = serde_json::json!({
                             "type": "response.function_call_arguments.delta",
-                            "item_id": format!("func_{}_{}", item_id_prefix, output_index),
+                            "item_id": func_item_id,
                             "output_index": output_index,
                             "delta": args,
                             "created_at": created_at
