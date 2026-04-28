@@ -29,7 +29,7 @@ pub async fn handle_non_streaming(
 
     let prompt_tokens = count_prompt_tokens(&outgoing_req);
 
-    let mut request_builder = state.client.post(backend_url);
+    let mut request_builder = state.client.post(backend_url.clone());
 
     if let Some(api_key) = &route.api_key {
         request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -87,6 +87,16 @@ pub async fn handle_non_streaming(
         Err(e) => return Err(e),
     };
 
+    // Debug logging for OpenAI-compatible backends
+    if matches!(route.provider_type, ProviderType::OpenAiCompatible)
+        && let Ok(body_str) = String::from_utf8(body.clone())
+    {
+        tracing::debug!(
+            "OpenAI-compatible request body: {}",
+            if body_str.len() > 2000 { format!("{}...", &body_str[..2000]) } else { body_str }
+        );
+    }
+
     let response = request_builder.body(body).send().await.map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
@@ -97,6 +107,12 @@ pub async fn handle_non_streaming(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
+        tracing::error!(
+            backend_url = %backend_url,
+            status = %status,
+            error_response = %error_text,
+            "Backend returned error"
+        );
         return Err((
             status,
             Json(json!({ "error": format!("Backend returned error: {}", error_text) })),

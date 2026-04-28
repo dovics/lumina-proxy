@@ -109,6 +109,16 @@ pub async fn handle_streaming(
         Err(e) => return Err(e),
     };
 
+    // Debug logging for GLM/OpenAI-compatible backends
+    if matches!(route.provider_type, ProviderType::OpenAiCompatible)
+        && let Ok(body_str) = String::from_utf8(body.clone())
+    {
+        tracing::debug!(
+            "OpenAI-compatible request body: {}",
+            if body_str.len() > 2000 { format!("{}...", &body_str[..2000]) } else { body_str }
+        );
+    }
+
     let mut request_builder = state.client.post(backend_url.clone());
     if let Some(api_key) = &route.api_key {
         request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -123,9 +133,21 @@ pub async fn handle_streaming(
         )
     })?;
 
+    tracing::debug!(
+        backend_url = %backend_url,
+        response_status = %response.status(),
+        "backend response status"
+    );
+
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
+        tracing::error!(
+            backend_url = %backend_url,
+            status = %status,
+            error_response = %error_text,
+            "Backend returned error"
+        );
         return Err((
             status,
             Json(json!({ "error": format!("Backend returned error: {}", error_text) })),
@@ -393,6 +415,43 @@ pub async fn handle_streaming(
                                             .unwrap_or(false);
 
                                         let finish_reason = choice.finish_reason.clone();
+
+                                        // Handle tool_calls sent via standard OpenAI field (not embedded in content)
+                                        if let Some(ref tool_calls) = choice.delta.tool_calls {
+                                            for tool_call in tool_calls {
+                                                if let Some(function) = &tool_call.function {
+                                                    if let Some(name) = &function.name
+                                                        && !name.is_empty()
+                                                    {
+                                                        tracing::debug!(
+                                                            "Moonlight: counting tool_call name from standard field: {}",
+                                                            name
+                                                        );
+                                                        counter.add_delta(name);
+                                                        has_content = true;
+                                                    }
+                                                    if let Some(arguments) = &function.arguments
+                                                        && !arguments.is_empty()
+                                                    {
+                                                        tracing::debug!(
+                                                            "Moonlight: counting tool_call args from standard field, len={}",
+                                                            arguments.len()
+                                                        );
+                                                        counter.add_delta(arguments);
+                                                        has_content = true;
+                                                    }
+                                                }
+                                            }
+                                            // Aggregate tool_calls and replace in chunk
+                                            let aggregated = aggregate_tool_calls(tool_calls);
+                                            if !aggregated.is_empty() {
+                                                tracing::debug!(
+                                                    "Moonlight: aggregated {} tool_calls from standard field",
+                                                    aggregated.len()
+                                                );
+                                                choice.delta.tool_calls = Some(aggregated);
+                                            }
+                                        }
 
                                         if !moonlight_in_tool_call && content_has_markers {
                                             tracing::debug!(

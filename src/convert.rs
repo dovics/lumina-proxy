@@ -493,7 +493,23 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
             content: Some(MessageContent::String(s.clone())),
             ..Default::default()
         }),
-        Some(ResponseInput::Messages(msgs)) => messages.extend(msgs.clone()),
+        Some(ResponseInput::Messages(msgs)) => {
+            // Normalize message content: convert MessageContent::Array to String
+            // Some backends (like GLM) expect Chat Completions content to be a plain string
+            let normalized_msgs: Vec<OpenAIMessage> = msgs
+                .clone()
+                .into_iter()
+                .map(|mut msg| {
+                    if let Some(content) = &msg.content
+                        && matches!(content, MessageContent::Array(_))
+                    {
+                        msg.content = Some(MessageContent::String(content.as_string()));
+                    }
+                    msg
+                })
+                .collect();
+            messages.extend(normalized_msgs);
+        }
         Some(ResponseInput::Raw(value)) => {
             // Try to parse raw JSON as an array of messages
             if let Some(arr) = value.as_array() {
