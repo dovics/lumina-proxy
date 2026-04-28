@@ -229,8 +229,17 @@ fn aggregate_tool_calls(tool_calls: &[OpenAIToolCall]) -> Vec<OpenAIToolCall> {
 pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
     let mut tool_calls = Vec::new();
 
+    tracing::debug!(
+        content = %content,
+        has_tool_call_begin = %content.contains("<|tool_call_begin|>"),
+        has_tool_call_argument_begin = %content.contains("<|tool_call_argument_begin|>"),
+        has_tool_calls_section_end = %content.contains("<|tool_calls_section_end|>"),
+        "parse_moonlight_tool_calls: analyzing content"
+    );
+
     // Check if we have the full format with <|tool_call_begin|> wrappers
     if content.contains("<|tool_call_begin|>") {
+        tracing::debug!("parse_moonlight_tool_calls: using full format (with wrappers)");
         // Full format: parse with section and call wrappers
         let (section_start, section_end) =
             if let Some(start) = content.find("<|tool_calls_section_begin|>") {
@@ -251,6 +260,14 @@ pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
             if let Some(call_end) = after_call_start.find("<|tool_call_end|>") {
                 let call_content = &after_call_start[..call_end];
                 if let Some(tool_call) = extract_moonlight_tool_call(call_content, index) {
+                    tracing::debug!(
+                        "parse_moonlight_tool_calls: extracted tool_call name={:?} args={:?}",
+                        tool_call.function.as_ref().and_then(|f| f.name.clone()),
+                        tool_call
+                            .function
+                            .as_ref()
+                            .and_then(|f| f.arguments.clone())
+                    );
                     tool_calls.push(tool_call);
                     index += 1;
                 }
@@ -260,6 +277,7 @@ pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
             }
         }
     } else if content.contains("<|tool_call_argument_begin|>") {
+        tracing::debug!("parse_moonlight_tool_calls: using simplified format");
         // Simplified format: just <|tool_call_argument_begin|> and <|tool_calls_section_end|>
         // Format: functions.{func_name}:{idx} <|tool_call_argument_begin|> {args} <|tool_calls_section_end|>
 
@@ -277,14 +295,34 @@ pub fn parse_moonlight_tool_calls(content: &str) -> Vec<OpenAIToolCall> {
             let tool_id = before_arg.trim();
             let arguments = after_arg.trim();
 
+            tracing::debug!(
+                "parse_moonlight_tool_calls: simplified format - tool_id={} arguments={}",
+                tool_id,
+                arguments
+            );
+
             if let Some(tool_call) =
                 extract_moonlight_tool_call_from_id_and_args(tool_id, arguments, 0)
             {
+                tracing::debug!(
+                    "parse_moonlight_tool_calls: simplified format extracted name={:?} args={:?}",
+                    tool_call.function.as_ref().and_then(|f| f.name.clone()),
+                    tool_call
+                        .function
+                        .as_ref()
+                        .and_then(|f| f.arguments.clone())
+                );
                 tool_calls.push(tool_call);
             }
         }
+    } else {
+        tracing::debug!("parse_moonlight_tool_calls: no recognized markers found");
     }
 
+    tracing::debug!(
+        "parse_moonlight_tool_calls: returning {} tool_calls",
+        tool_calls.len()
+    );
     tool_calls
 }
 
@@ -1051,9 +1089,17 @@ async fn handle_streaming(
                                                     .contains("<|tool_calls_section_end|>");
 
                                             if has_tool_call_markers {
+                                                tracing::debug!(
+                                                    "Moonlight: content has tool call markers, content={}",
+                                                    content_str
+                                                );
                                                 // Try to parse with full section markers first
                                                 let parsed =
                                                     parse_moonlight_tool_calls(content_str);
+                                                tracing::debug!(
+                                                    "Moonlight: parse_moonlight_tool_calls returned {} tool_calls",
+                                                    parsed.len()
+                                                );
                                                 let text_only =
                                                     strip_moonlight_tool_markers(content_str);
 
@@ -1188,6 +1234,43 @@ async fn handle_streaming(
                                     }
 
                                     if !tool_call_chunks.is_empty() {
+                                        tracing::debug!(
+                                            "Moonlight: returning {} tool_call_chunks",
+                                            tool_call_chunks.len()
+                                        );
+                                        for (i, tc) in tool_call_chunks.iter().enumerate() {
+                                            if let Some(tc_data) = tc
+                                                .choices
+                                                .first()
+                                                .and_then(|c| c.delta.tool_calls.as_ref())
+                                                .and_then(|tcs| tcs.first())
+                                            {
+                                                tracing::debug!(
+                                                    "  chunk[{}]: tool_call id={:?} name={:?} args={:?}",
+                                                    i,
+                                                    tc_data.id,
+                                                    tc_data
+                                                        .function
+                                                        .as_ref()
+                                                        .and_then(|f| f.name.clone()),
+                                                    tc_data.function.as_ref().and_then(|f| f
+                                                        .arguments
+                                                        .as_ref()
+                                                        .map(|a| if a.len() > 50 {
+                                                            format!("{}...", &a[..50])
+                                                        } else {
+                                                            a.clone()
+                                                        }))
+                                                );
+                                            } else if tc.choices.first().map(|c| &c.finish_reason)
+                                                == Some(&Some("tool_calls".to_string()))
+                                            {
+                                                tracing::debug!(
+                                                    "  chunk[{}]: final chunk with finish_reason=tool_calls",
+                                                    i
+                                                );
+                                            }
+                                        }
                                         // Return multiple chunks in OpenAI streaming format
                                         StreamChunkResult::Multiple(tool_call_chunks)
                                     } else {
