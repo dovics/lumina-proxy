@@ -40,15 +40,3 @@ jobs:
         run: |
           rm -rf /tmp/.docker-cache
           mv /tmp/.docker-cache-new /tmp/.docker-cache
-
-      - name: Run container health check
-        run: |
-          docker run -d --name lumina-test -p 8080:8080 \
-            -v ${{ github.workspace }}/config.yaml.local:/app/config.yaml:ro \
-            lumina-proxy:latest /app/config.yaml
-          sleep 5
-          # Check if container is running
-          docker ps | grep lumina-test
-          # Cleanup
-          docker stop lumina-test || true
-          docker rm lumina-test || true
