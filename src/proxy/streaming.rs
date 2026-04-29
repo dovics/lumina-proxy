@@ -219,7 +219,7 @@ pub async fn handle_streaming(
             let provider_type = provider_type;
 
             loop {
-                let mut yielded_chunks = Vec::new();
+                let mut yielded_chunks: Vec<Result<Bytes, std::io::Error>> = Vec::new();
                 while let Some(pos) = buffer.find('\n') {
                     let line = buffer[0..pos].trim().to_string();
                     buffer = buffer[pos + 1..].to_string();
@@ -450,13 +450,15 @@ pub async fn handle_streaming(
                 }
 
                 if !yielded_chunks.is_empty() {
-                    let next_chunk = yielded_chunks.remove(0);
+                    // Concatenate ALL available chunks to avoid per-chunk latency
+                    // Without this, only 1 chunk is sent per upstream network read,
+                    // causing massive latency when upstream sends many chunks at once
+                    let mut all_bytes = Vec::new();
                     for bytes in yielded_chunks.into_iter().flatten() {
-                        let s = String::from_utf8_lossy(bytes.as_ref());
-                        buffer = s.to_string() + &buffer;
+                        all_bytes.extend_from_slice(&bytes);
                     }
                     return Some((
-                        next_chunk,
+                        Ok(Bytes::from(all_bytes)),
                         (
                             bytes_stream,
                             counter,
