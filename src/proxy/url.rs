@@ -78,20 +78,25 @@ pub fn build_backend_url_for_endpoint(
                 } else if let Some(url) = &route.url {
                     Ok(url.clone())
                 } else {
-                    route.url.clone().ok_or_else(|| {
-                        ProxyError::ConfigError(format!(
-                            "OpenAI-compatible route for model '{}' missing url",
-                            model
-                        ))
-                    })
+                    Err(ProxyError::ConfigError(format!(
+                        "OpenAI-compatible route for model '{}' missing base_url or url",
+                        model
+                    )))
                 }
             } else {
-                route.url.clone().ok_or_else(|| {
-                    ProxyError::ConfigError(format!(
-                        "OpenAI-compatible route for model '{}' missing url",
-                        model
+                if let Some(url) = &route.url {
+                    Ok(url.clone())
+                } else if let Some(base_url) = &route.base_url {
+                    Ok(format!(
+                        "{}/v1/chat/completions",
+                        base_url.trim_end_matches('/')
                     ))
-                })
+                } else {
+                    Err(ProxyError::ConfigError(format!(
+                        "OpenAI-compatible route for model '{}' missing url or base_url",
+                        model
+                    )))
+                }
             }
         }
 

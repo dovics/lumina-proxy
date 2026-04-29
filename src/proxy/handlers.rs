@@ -79,6 +79,7 @@ pub async fn proxy_handler(
     let backend_url = match build_backend_url(route, &model) {
         Ok(url) => url,
         Err(e) => {
+            tracing::warn!(model = %model, error = %e, "Failed to build backend URL");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": e.to_string() })),
@@ -191,6 +192,7 @@ pub async fn responses_handler(
         let backend_url = match build_backend_url_for_endpoint(route, &model, true) {
             Ok(url) => url,
             Err(e) => {
+                tracing::warn!(model = %model, error = %e, "Failed to build backend URL for responses API");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": e.to_string() })),
@@ -308,6 +310,7 @@ pub async fn responses_handler(
         let backend_url = match build_backend_url(route, &model) {
             Ok(url) => url,
             Err(e) => {
+                tracing::warn!(model = %model, error = %e, "Failed to build backend URL for non-streaming");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": e.to_string() })),
