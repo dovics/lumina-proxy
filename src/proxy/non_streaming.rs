@@ -177,6 +177,17 @@ pub async fn handle_non_streaming(
                 })?;
             let tokens = openai_resp.usage.completion_tokens as usize;
             openai_resp.model = model.clone();
+
+            // Normalize content: convert null to empty string for better client compatibility
+            // Some providers return content: null when there's no text output (e.g., token limit reached)
+            for choice in &mut openai_resp.choices {
+                if let Some(ref mut message) = choice.message
+                    && message.content.is_none()
+                {
+                    message.content = Some(MessageContent::String(String::new()));
+                }
+            }
+
             (openai_resp, tokens)
         }
     };
