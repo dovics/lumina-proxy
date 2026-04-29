@@ -117,6 +117,10 @@ pub struct RouteConfig {
     /// API key for authentication (optional for local providers like Ollama)
     #[serde(default)]
     pub api_key: Option<String>,
+    /// Whether to use native Responses API endpoint instead of Chat Completions
+    /// Only relevant for OpenAI-compatible providers that support both endpoints
+    #[serde(default)]
+    pub use_native_responses: bool,
     /// Whether this route is enabled
     pub enabled: bool,
 }

@@ -127,30 +127,58 @@ pub async fn handle_streaming(
     request_builder = request_builder.header("Accept", "text/event-stream");
 
     let response = request_builder.body(body).send().await.map_err(|e| {
+        tracing::error!(
+            backend_url = %backend_url,
+            error = %e,
+            "Backend connection failed"
+        );
         (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "error": format!("Backend request failed: {}", e) })),
         )
     })?;
 
+    let status = response.status();
     tracing::debug!(
         backend_url = %backend_url,
-        response_status = %response.status(),
+        response_status = %status,
         "backend response status"
     );
 
-    if !response.status().is_success() {
-        let status = response.status();
+    if !status.is_success() {
         let error_text = response.text().await.unwrap_or_default();
         tracing::error!(
             backend_url = %backend_url,
             status = %status,
             error_response = %error_text,
+            content_length = error_text.len(),
             "Backend returned error"
         );
         return Err((
             status,
             Json(json!({ "error": format!("Backend returned error: {}", error_text) })),
+        ));
+    }
+
+    // Check Content-Type to detect error pages (e.g., Kimi returning HTML error pages with 200 status)
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    if !content_type.contains("text/event-stream") && !content_type.contains("application/json") {
+        let body_text = response.text().await.unwrap_or_default();
+        tracing::error!(
+            backend_url = %backend_url,
+            content_type = %content_type,
+            body_preview = %if body_text.len() > 500 { format!("{}...", &body_text[..500]) } else { body_text.clone() },
+            "Backend returned non-SSE response (possibly error page)"
+        );
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("Backend returned unexpected content type: {}", content_type) })),
         ));
     }
 

@@ -5,7 +5,7 @@ use super::responses_convert::{convert_chat_sse_to_responses_sse, fetch_upstream
 use super::state::ProxyState;
 use super::streaming::handle_streaming;
 use super::url::{build_backend_url, build_backend_url_for_endpoint};
-use crate::config::{Config, ProviderType};
+use crate::config::Config;
 use crate::convert::{convert_chat_to_responses, convert_responses_to_chat};
 use crate::stats::StatsWriter;
 use crate::token_counter::count_prompt_tokens;
@@ -150,7 +150,18 @@ pub async fn responses_handler(
 
     let config = state.config.load();
     let model = req.model.clone();
+    tracing::debug!(
+        model = %model,
+        bytes_len = bytes.len(),
+        "Looking up backend route for model"
+    );
+
     let Some(route) = config.find_backend_for_model(&model) else {
+        tracing::error!(
+            model = %model,
+            available_models = ?config.routes.iter().map(|r| &r.model_name).collect::<Vec<_>>(),
+            "No backend route found for model"
+        );
         return (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": format!("No backend route configured for model: {}", model) })),
@@ -158,10 +169,25 @@ pub async fn responses_handler(
             .into_response();
     };
 
-    let use_native_responses = matches!(route.provider_type, ProviderType::OpenAi);
+    tracing::debug!(
+        model = %model,
+        provider_type = ?route.provider_type,
+        base_url = ?route.base_url,
+        url = ?route.url,
+        "Found route for model"
+    );
+
+    let use_native_responses = route.use_native_responses;
     let is_streaming = req.stream.unwrap_or(false);
 
+    tracing::debug!(
+        use_native_responses = %use_native_responses,
+        is_streaming = %is_streaming,
+        "About to check use_native_responses branch"
+    );
+
     if use_native_responses {
+        tracing::debug!("Taking use_native_responses=TRUE branch");
         let backend_url = match build_backend_url_for_endpoint(route, &model, true) {
             Ok(url) => url,
             Err(e) => {
@@ -173,7 +199,33 @@ pub async fn responses_handler(
             }
         };
 
-        let mut request_builder = state.client.post(backend_url);
+        let upstream_model = route.upstream_model();
+        let body_str = String::from_utf8_lossy(&bytes);
+        tracing::debug!(
+            original_model = %model,
+            upstream_model = %upstream_model,
+            request_body = %body_str,
+            "use_native_responses=TRUE: original request body"
+        );
+
+        let request_body = if model != upstream_model {
+            match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(mut json) => {
+                    json["model"] = serde_json::Value::String(upstream_model.to_string());
+                    let replaced = serde_json::to_string(&json).unwrap_or_else(|_| body_str.to_string());
+                    tracing::debug!(replaced_body = %replaced, "use_native_responses=TRUE: model name replaced via JSON");
+                    replaced
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to parse request as JSON for model replacement: {}", e);
+                    body_str.to_string()
+                }
+            }
+        } else {
+            body_str.to_string()
+        };
+
+        let mut request_builder = state.client.post(&backend_url);
         if let Some(api_key) = &route.api_key {
             request_builder =
                 request_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -181,7 +233,13 @@ pub async fn responses_handler(
         request_builder = request_builder.header("Content-Type", "application/json");
 
         if is_streaming {
-            let response = request_builder.body(bytes.to_vec()).send().await;
+            let response = request_builder.body(request_body.into_bytes()).send().await;
+
+            tracing::debug!(
+                backend_url = %backend_url,
+                response = ?response.as_ref().map(|r| r.status().as_u16()),
+                "use_native_responses=TRUE: backend response"
+            );
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
@@ -200,6 +258,12 @@ pub async fn responses_handler(
                 Ok(resp) => {
                     let status = resp.status();
                     let error_text = resp.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        backend_url = %backend_url,
+                        status = %status,
+                        error_text = %error_text,
+                        "use_native_responses=TRUE: backend returned error"
+                    );
                     (status, Json(json!({ "error": error_text }))).into_response()
                 }
                 Err(e) => (
@@ -209,7 +273,7 @@ pub async fn responses_handler(
                     .into_response(),
             }
         } else {
-            let response = request_builder.body(bytes.to_vec()).send().await;
+            let response = request_builder.body(request_body.into_bytes()).send().await;
 
             match response {
                 Ok(resp) if resp.status().is_success() => {
@@ -224,6 +288,12 @@ pub async fn responses_handler(
                 Ok(resp) => {
                     let status = resp.status();
                     let error_text = resp.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        backend_url = %backend_url,
+                        status = %status,
+                        error_text = %error_text,
+                        "use_native_responses=TRUE (non-streaming): backend returned error"
+                    );
                     (status, Json(json!({ "error": error_text }))).into_response()
                 }
                 Err(e) => (
@@ -234,6 +304,7 @@ pub async fn responses_handler(
             }
         }
     } else {
+        tracing::debug!("Taking use_native_responses=FALSE branch");
         let backend_url = match build_backend_url(route, &model) {
             Ok(url) => url,
             Err(e) => {
@@ -247,7 +318,17 @@ pub async fn responses_handler(
 
         let chat_req = convert_responses_to_chat(&req);
 
+        tracing::debug!(
+            model = %chat_req.model,
+            backend_url = %backend_url,
+            provider_type = ?route.provider_type,
+            is_streaming = %is_streaming,
+            message_count = chat_req.messages.len(),
+            "Prepared chat request for streaming - about to call handle_streaming"
+        );
+
         if is_streaming {
+            tracing::debug!("Calling handle_streaming for Responses API");
             match handle_streaming(&state, chat_req.clone(), route, backend_url).await {
                 Ok(response) => {
                     let (parts, body) = response.into_parts();
@@ -271,9 +352,17 @@ pub async fn responses_handler(
                     let mut response = Response::new(Body::from_stream(transformed_stream));
                     *response.status_mut() = parts.status;
                     *response.headers_mut() = parts.headers;
+                    tracing::debug!("Responses API streaming: returning transformed stream");
                     response.into_response()
                 }
-                Err((status, error)) => (status, error).into_response(),
+                Err((status, error)) => {
+                    tracing::error!(
+                        status = %status,
+                        error = ?error,
+                        "handle_streaming returned error for Responses API streaming"
+                    );
+                    (status, error).into_response()
+                }
             }
         } else {
             match handle_non_streaming(&state, chat_req, route, backend_url).await {
@@ -285,7 +374,14 @@ pub async fn responses_handler(
                     let responses_resp = convert_chat_to_responses(&chat_resp, created_at);
                     (StatusCode::OK, Json(responses_resp)).into_response()
                 }
-                Err((status, error)) => (status, error).into_response(),
+                Err((status, error)) => {
+                    tracing::error!(
+                        status = %status,
+                        error = ?error,
+                        "handle_non_streaming returned error for Responses API"
+                    );
+                    (status, error).into_response()
+                }
             }
         }
     }
