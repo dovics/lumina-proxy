@@ -7,15 +7,15 @@ use lumina::convert::{
 use lumina::types::{
     AnthropicChatResponse, AnthropicContent, AnthropicDelta, AnthropicStreamChunk, AnthropicUsage,
     GeminiCandidate, GeminiChatResponse, GeminiContent, GeminiPart, GeminiStreamChunk,
-    GeminiUsageMetadata, OllamaChatResponse, OllamaDelta, OllamaMessage, OllamaStreamChunk,
-    OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall,
+    GeminiUsageMetadata, MessageContent, OllamaChatResponse, OllamaDelta, OllamaMessage,
+    OllamaStreamChunk, OpenAIChatRequest, OpenAIMessage, OpenAITool, OpenAIToolCall,
     OpenAIToolCallFunction, OpenAIToolFunction,
 };
 
 fn openai_message(role: &str, content: &str) -> OpenAIMessage {
     OpenAIMessage {
         role: role.to_string(),
-        content: Some(content.to_string()),
+        content: Some(MessageContent::String(content.to_string())),
         ..Default::default()
     }
 }
@@ -68,7 +68,7 @@ fn test_ollama_to_openai_response_conversion() {
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
     assert_eq!(
-        message.content.as_deref(),
+        message.content.as_ref().map(|c| c.as_string()).as_deref(),
         Some("Hello! How can I help you today?")
     );
     assert_eq!(openai_resp.usage.prompt_tokens, 5);
@@ -190,7 +190,7 @@ fn test_anthropic_to_openai_response_conversion() {
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
     assert_eq!(
-        message.content.as_deref(),
+        message.content.as_ref().map(|c| c.as_string()).as_deref(),
         Some("Hello! How can I help you today?")
     );
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
@@ -300,7 +300,7 @@ fn test_gemini_to_openai_response_conversion() {
     let message = openai_resp.choices[0].message.as_ref().unwrap();
     assert_eq!(message.role, "assistant");
     assert_eq!(
-        message.content.as_deref(),
+        message.content.as_ref().map(|c| c.as_string()).as_deref(),
         Some("Why did the chicken cross the road? To get to the other side!")
     );
     assert_eq!(openai_resp.usage.prompt_tokens, 10);
@@ -347,7 +347,7 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
         messages: vec![
             OpenAIMessage {
                 role: "user".to_string(),
-                content: Some("What's the weather?".to_string()),
+                content: Some(MessageContent::String("What's the weather?".to_string())),
                 ..Default::default()
             },
             OpenAIMessage {
@@ -366,7 +366,9 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
             },
             OpenAIMessage {
                 role: "tool".to_string(),
-                content: Some(r#"{"temperature":"25°C"}"#.to_string()),
+                content: Some(MessageContent::String(
+                    r#"{"temperature":"25°C"}"#.to_string(),
+                )),
                 tool_call_id: Some("call_123".to_string()),
                 name: Some("get_weather".to_string()),
                 ..Default::default()
@@ -375,8 +377,9 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -384,7 +387,7 @@ fn test_convert_openai_message_with_tool_calls_to_ollama() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -403,14 +406,15 @@ fn test_convert_openai_message_with_tool_to_anthropic() {
         model: "claude-3-5-sonnet".to_string(),
         messages: vec![OpenAIMessage {
             role: "user".to_string(),
-            content: Some("What's the weather?".to_string()),
+            content: Some(MessageContent::String("What's the weather?".to_string())),
             ..Default::default()
         }],
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -418,7 +422,7 @@ fn test_convert_openai_message_with_tool_to_anthropic() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -437,14 +441,15 @@ fn test_convert_openai_message_with_tool_to_gemini() {
         model: "gemini-pro".to_string(),
         messages: vec![OpenAIMessage {
             role: "user".to_string(),
-            content: Some("What's the weather?".to_string()),
+            content: Some(MessageContent::String("What's the weather?".to_string())),
             ..Default::default()
         }],
         tools: Some(vec![OpenAITool {
             id: Some("weather_tool".to_string()),
             r#type: "function".to_string(),
-            function: OpenAIToolFunction {
+            function: Some(OpenAIToolFunction {
                 name: "get_weather".to_string(),
+                strict: None,
                 description: Some("Get weather for a location".to_string()),
                 parameters: Some(serde_json::json!({
                     "type": "object",
@@ -452,7 +457,7 @@ fn test_convert_openai_message_with_tool_to_gemini() {
                         "location": {"type": "string"}
                     }
                 })),
-            },
+            }),
         }]),
         ..Default::default()
     };
@@ -486,8 +491,12 @@ fn test_convert_responses_to_chat_with_string_input() {
     assert_eq!(chat_req.messages.len(), 1);
     assert_eq!(chat_req.messages[0].role, "user");
     assert_eq!(
-        chat_req.messages[0].content,
-        Some("Hello, how are you?".to_string())
+        chat_req.messages[0]
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .as_deref(),
+        Some("Hello, how are you?")
     );
     assert_eq!(chat_req.temperature, Some(0.7));
     assert_eq!(chat_req.top_p, Some(0.9));
@@ -505,12 +514,14 @@ fn test_convert_responses_to_chat_with_message_array() {
         input: Some(ResponseInput::Messages(vec![
             OpenAIMessage {
                 role: "system".to_string(),
-                content: Some("You are a helpful assistant".to_string()),
+                content: Some(MessageContent::String(
+                    "You are a helpful assistant".to_string(),
+                )),
                 ..Default::default()
             },
             OpenAIMessage {
                 role: "user".to_string(),
-                content: Some("Hello!".to_string()),
+                content: Some(MessageContent::String("Hello!".to_string())),
                 ..Default::default()
             },
         ])),
@@ -522,7 +533,100 @@ fn test_convert_responses_to_chat_with_message_array() {
     assert_eq!(chat_req.messages.len(), 2);
     assert_eq!(chat_req.messages[0].role, "system");
     assert_eq!(chat_req.messages[1].role, "user");
-    assert_eq!(chat_req.messages[1].content, Some("Hello!".to_string()));
+    assert_eq!(
+        chat_req.messages[1]
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .as_deref(),
+        Some("Hello!")
+    );
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_raw_json_input() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+    use serde_json::json;
+
+    // Test with complex raw JSON input (array format)
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        input: Some(ResponseInput::Raw(json!([
+            {"role": "user", "content": "Hello from raw JSON!"}
+        ]))),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 1);
+    assert_eq!(chat_req.messages[0].role, "user");
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_instructions() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+
+    // Test with instructions (should become system message) and string input
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        instructions: Some("You are a helpful coding assistant".to_string()),
+        input: Some(ResponseInput::String("Hello, how are you?".to_string())),
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 2);
+    // Instructions should be first message as system role
+    assert_eq!(chat_req.messages[0].role, "system");
+    assert_eq!(
+        chat_req.messages[0]
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .as_deref(),
+        Some("You are a helpful coding assistant")
+    );
+    // Input should be second message as user role
+    assert_eq!(chat_req.messages[1].role, "user");
+    assert_eq!(
+        chat_req.messages[1]
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .as_deref(),
+        Some("Hello, how are you?")
+    );
+}
+
+#[test]
+fn test_convert_responses_to_chat_with_instructions_only() {
+    use lumina::convert::convert_responses_to_chat;
+    use lumina::types::*;
+
+    // Test with instructions only (no input)
+    let responses_req = ResponsesRequest {
+        model: "gpt-4o".to_string(),
+        instructions: Some("You are a helpful assistant".to_string()),
+        input: None,
+        ..Default::default()
+    };
+
+    let chat_req = convert_responses_to_chat(&responses_req);
+    assert_eq!(chat_req.model, "gpt-4o");
+    assert_eq!(chat_req.messages.len(), 1);
+    assert_eq!(chat_req.messages[0].role, "system");
+    assert_eq!(
+        chat_req.messages[0]
+            .content
+            .as_ref()
+            .map(|c| c.as_string())
+            .as_deref(),
+        Some("You are a helpful assistant")
+    );
 }
 
 #[test]
@@ -539,7 +643,7 @@ fn test_convert_chat_to_responses() {
             index: 0,
             message: Some(OpenAIMessage {
                 role: "assistant".to_string(),
-                content: Some("Hello there!".to_string()),
+                content: Some(MessageContent::String("Hello there!".to_string())),
                 ..Default::default()
             }),
             delta: None,
@@ -656,3 +760,5 @@ fn test_responses_response_serialization() {
     assert_eq!(deserialized.status, "completed");
     assert_eq!(deserialized.usage.unwrap().total_tokens, 15);
 }
+
+// =============================================================================

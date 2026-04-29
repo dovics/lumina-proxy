@@ -13,7 +13,7 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
         .messages
         .iter()
         .map(|m| {
-            let content = m.content.clone().unwrap_or_default();
+            let content = m.content.clone().unwrap_or_default().as_string();
             OllamaMessage {
                 role: m.role.clone(),
                 content,
@@ -25,12 +25,13 @@ pub fn convert_openai_to_ollama(req: &OpenAIChatRequest) -> OllamaChatRequest {
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| OllamaTool {
                 type_: "function".to_string(),
                 function: OllamaToolFunction {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone(),
-                    parameters: t.function.parameters.clone(),
+                    name: t.function.as_ref().unwrap().name.clone(),
+                    description: t.function.as_ref().unwrap().description.clone(),
+                    parameters: t.function.as_ref().unwrap().parameters.clone(),
                 },
             })
             .collect()
@@ -61,7 +62,7 @@ pub fn convert_ollama_to_openai(resp: &OllamaChatResponse, model: &str) -> OpenA
             index: 0,
             message: Some(OpenAIMessage {
                 role: resp.message.role.clone(),
-                content: Some(resp.message.content.clone()),
+                content: Some(MessageContent::String(resp.message.content.clone())),
                 ..Default::default()
             }),
             delta: None,
@@ -126,11 +127,11 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     // Extract system message to top-level system field as required by Anthropic API
     for msg in &req.messages {
         if msg.role == "system" && system.is_none() {
-            system = Some(msg.content.clone().unwrap_or_default());
+            system = Some(msg.content.clone().unwrap_or_default().as_string());
         } else {
             messages.push(AnthropicMessage {
                 role: msg.role.clone(),
-                content: msg.content.clone().unwrap_or_default(),
+                content: msg.content.clone().unwrap_or_default().as_string(),
             });
         }
     }
@@ -142,11 +143,14 @@ pub fn convert_openai_to_anthropic(req: &OpenAIChatRequest) -> AnthropicChatRequ
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| AnthropicTool {
-                name: t.function.name.clone(),
-                description: t.function.description.clone(),
+                name: t.function.as_ref().unwrap().name.clone(),
+                description: t.function.as_ref().unwrap().description.clone(),
                 input_schema: t
                     .function
+                    .as_ref()
+                    .unwrap()
                     .parameters
                     .clone()
                     .unwrap_or(serde_json::json!({})),
@@ -197,7 +201,7 @@ pub fn convert_anthropic_to_openai(
             index: 0,
             message: Some(OpenAIMessage {
                 role: "assistant".to_string(),
-                content: Some(content),
+                content: Some(MessageContent::String(content)),
                 ..Default::default()
             }),
             delta: None,
@@ -269,12 +273,12 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
                     text: None,
                     function_response: Some(GeminiFunctionResponse {
                         name: m.name.clone().unwrap_or_default(),
-                        response: m.content.clone().unwrap_or_default(),
+                        response: m.content.clone().unwrap_or_default().as_string(),
                     }),
                 }]
             } else {
                 vec![GeminiPart {
-                    text: m.content.clone(),
+                    text: m.content.clone().map(|c| c.as_string()),
                     function_response: None,
                 }]
             };
@@ -310,11 +314,12 @@ pub fn convert_openai_to_gemini(req: &OpenAIChatRequest) -> GeminiChatRequest {
     let tools = req.tools.as_ref().map(|tools| {
         tools
             .iter()
+            .filter(|t| t.function.is_some())
             .map(|t| GeminiTool {
                 function_declarations: vec![GeminiFunctionDeclaration {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone(),
-                    parameters: t.function.parameters.clone(),
+                    name: t.function.as_ref().unwrap().name.clone(),
+                    description: t.function.as_ref().unwrap().description.clone(),
+                    parameters: t.function.as_ref().unwrap().parameters.clone(),
                 }],
             })
             .collect()
@@ -366,7 +371,7 @@ pub fn convert_gemini_to_openai(
                 index: idx as u32,
                 message: Some(OpenAIMessage {
                     role: "assistant".to_string(),
-                    content: Some(content),
+                    content: Some(MessageContent::String(content)),
                     ..Default::default()
                 }),
                 delta: None,
@@ -470,16 +475,100 @@ fn current_timestamp() -> u64 {
 
 /// Convert a Responses API request to Chat Completions API request
 pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
-    // Convert input to messages
-    let messages = match &req.input {
-        Some(ResponseInput::String(s)) => vec![OpenAIMessage {
-            role: "user".to_string(),
-            content: Some(s.clone()),
+    let mut messages = Vec::new();
+
+    // Add instructions as system message first
+    if let Some(instructions) = &req.instructions {
+        messages.push(OpenAIMessage {
+            role: "system".to_string(),
+            content: Some(MessageContent::String(instructions.clone())),
             ..Default::default()
-        }],
-        Some(ResponseInput::Messages(msgs)) => msgs.clone(),
-        None => vec![],
+        });
+    }
+
+    // Convert input to messages
+    match &req.input {
+        Some(ResponseInput::String(s)) => messages.push(OpenAIMessage {
+            role: "user".to_string(),
+            content: Some(MessageContent::String(s.clone())),
+            ..Default::default()
+        }),
+        Some(ResponseInput::Messages(msgs)) => {
+            messages.extend(msgs.clone());
+        }
+        Some(ResponseInput::Raw(value)) => {
+            // Try to parse raw JSON as an array of messages
+            if let Some(arr) = value.as_array() {
+                let parsed_messages: Vec<OpenAIMessage> = arr
+                    .iter()
+                    .map(|v| {
+                        // Try to deserialize each item as OpenAIMessage
+                        serde_json::from_value(v.clone()).unwrap_or_else(|_| {
+                            // Fallback: create a simple user message
+                            OpenAIMessage {
+                                role: "user".to_string(),
+                                content: Some(MessageContent::String(v.to_string())),
+                                ..Default::default()
+                            }
+                        })
+                    })
+                    .collect();
+                messages.extend(parsed_messages);
+            } else {
+                // Not an array - create a single message with string representation
+                messages.push(OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(MessageContent::String(value.to_string())),
+                    ..Default::default()
+                });
+            }
+        }
+        None => {}
     };
+
+    // Normalize message content for all backends:
+    // 1. Convert array content to plain string - many backends don't support multi-modal array format
+    // 2. Rename "input_text" type to "text" for backends expecting Chat Completions format
+    let messages: Vec<OpenAIMessage> = messages
+        .into_iter()
+        .map(|mut msg| {
+            if let Some(content) = &msg.content
+                && matches!(content, MessageContent::Array(_))
+            {
+                msg.content = Some(MessageContent::String(content.as_string()));
+            }
+            msg
+        })
+        .collect();
+
+    // Filter out tools without function field and ensure parameters has type: "object"
+    let tools = req.tools.as_ref().map(|tools| {
+        tools
+            .iter()
+            .filter(|t| t.function.is_some())
+            .map(|t| {
+                let mut tool = t.clone();
+                if let Some(ref mut function) = tool.function
+                    && let Some(ref mut params) = function.parameters
+                    && params.is_object()
+                    && !params.as_object().unwrap().contains_key("type")
+                    && let Some(obj) = params.as_object_mut()
+                {
+                    obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String("object".to_string()),
+                    );
+                }
+                tool
+            })
+            .collect()
+    });
+
+    // Convert text.format to response_format
+    let response_format = req.text.as_ref().and_then(|t| t.format.clone());
+
+    // Extract reasoning_effort from reasoning
+    let reasoning_effort = req.reasoning.as_ref().and_then(|r| r.effort.clone());
 
     OpenAIChatRequest {
         model: req.model.clone(),
@@ -488,8 +577,10 @@ pub fn convert_responses_to_chat(req: &ResponsesRequest) -> OpenAIChatRequest {
         top_p: req.top_p,
         max_tokens: req.max_output_tokens,
         stream: req.stream,
-        tools: req.tools.clone(),
+        tools,
         tool_choice: req.tool_choice.clone(),
+        response_format,
+        reasoning_effort,
         ..Default::default()
     }
 }
@@ -541,7 +632,7 @@ pub fn convert_chat_to_responses(resp: &OpenAIChatResponse, created_at: i64) -> 
             role: Some("assistant".to_string()),
             content: Some(vec![ResponseContentPart {
                 content_type: "output_text".to_string(),
-                text: Some(content_text),
+                text: Some(content_text.as_string()),
                 annotations: None,
             }]),
         }],
@@ -566,41 +657,104 @@ pub fn convert_chat_to_responses(resp: &OpenAIChatResponse, created_at: i64) -> 
 /// Returns the event type and JSON data
 pub fn convert_chat_stream_chunk_to_responses(
     chunk: &OpenAIStreamChunk,
+    response_id: &str,
     created_at: i64,
 ) -> Vec<(String, serde_json::Value)> {
     let mut events = Vec::new();
+    let item_id_prefix = &response_id[0..std::cmp::min(8, response_id.len())];
 
-    // Send response.created event first (only for first chunk)
-    // Note: We can't track if this is the first chunk here,
-    // so this needs to be handled at the caller level
-
-    // Extract delta content
     for choice in &chunk.choices {
+        // Handle text content delta
         if let Some(ref content) = choice.delta.content
             && !content.is_empty()
         {
-            // output_text.delta event
             let delta_event = serde_json::json!({
                 "type": "response.output_text.delta",
+                "item_id": format!("item_{}", item_id_prefix),
                 "output_index": 0,
                 "content_index": 0,
-                "delta": {
-                    "type": "text",
-                    "text": content
-                },
+                "delta": content,
                 "created_at": created_at
             });
             events.push(("response.output_text.delta".to_string(), delta_event));
         }
 
-        // If finish_reason, send response.completed event
-        if let Some(_finish_reason) = &choice.finish_reason {
-            let completed_event = serde_json::json!({
-                "type": "response.completed",
-                "created_at": created_at
-            });
-            events.push(("response.completed".to_string(), completed_event));
+        // Handle tool calls delta
+        if let Some(ref tool_calls) = choice.delta.tool_calls {
+            tracing::debug!(
+                "convert_chat_stream_chunk_to_responses: processing {} tool_calls, chunk_id={}",
+                tool_calls.len(),
+                chunk.id
+            );
+            for tool_call in tool_calls {
+                let call_index = tool_call.index.unwrap_or(0);
+                let output_index = call_index + 1; // +1 because text is index 0
+                let func_item_id = format!("func_{}_{}", item_id_prefix, output_index);
+                let call_id = tool_call
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("call_{}", item_id_prefix));
+
+                tracing::debug!(
+                    "convert_chat_stream_chunk_to_responses: tool_call call_index={}, func_item_id={}, call_id={}",
+                    call_index,
+                    func_item_id,
+                    call_id
+                );
+
+                if let Some(ref function) = tool_call.function {
+                    // Send initial function_call event if function name is present
+                    if let Some(ref name) = function.name {
+                        tracing::debug!(
+                            "convert_chat_stream_chunk_to_responses: emitting response.function_call event, name={}",
+                            name
+                        );
+                        let func_event = serde_json::json!({
+                            "type": "response.function_call",
+                            "output_index": output_index,
+                            "item": {
+                                "id": func_item_id,
+                                "type": "function_call",
+                                "name": name,
+                                "call_id": call_id,
+                                "arguments": ""
+                            },
+                            "created_at": created_at
+                        });
+                        events.push(("response.function_call".to_string(), func_event));
+                    }
+
+                    // Send function call arguments delta
+                    if let Some(ref args) = function.arguments
+                        && !args.is_empty()
+                    {
+                        tracing::debug!(
+                            "convert_chat_stream_chunk_to_responses: emitting response.function_call_arguments.delta event, args_len={}",
+                            args.len()
+                        );
+                        let delta_event = serde_json::json!({
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": func_item_id,
+                            "output_index": output_index,
+                            "delta": args,
+                            "created_at": created_at
+                        });
+                        events.push((
+                            "response.function_call_arguments.delta".to_string(),
+                            delta_event,
+                        ));
+                    }
+                }
+            }
         }
+    }
+
+    if !events.is_empty() {
+        tracing::debug!(
+            "convert_chat_stream_chunk_to_responses: returning {} events for chunk_id={}",
+            events.len(),
+            chunk.id
+        );
     }
 
     events
@@ -646,3 +800,18 @@ pub fn create_response_output_item_done_event(
     });
     ("response.output_item.done".to_string(), event)
 }
+
+/// Format a Responses API event as SSE line
+pub fn format_responses_sse_event(event_type: &str, data: &serde_json::Value) -> String {
+    format!(
+        "event: {}\ndata: {}\n\n",
+        event_type,
+        serde_json::to_string(data).unwrap()
+    )
+}
+
+/// Format the final [DONE] SSE line
+pub fn format_responses_sse_done() -> String {
+    "data: [DONE]\n\n".to_string()
+}
+
