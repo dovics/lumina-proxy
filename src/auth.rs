@@ -10,11 +10,17 @@ use std::sync::Arc;
 
 /// Authentication middleware that validates Bearer tokens
 /// If no auth token is configured in the config, all requests are allowed
+/// OPTIONS requests (CORS preflight) are always allowed without authentication
 pub async fn auth_middleware(
     State(state): State<Arc<ProxyState>>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // Allow OPTIONS requests without authentication for CORS preflight
+    if req.method() == axum::http::Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
     // If no auth token is configured, allow all requests
     let config = state.config.load();
     let Some(expected_token) = &config.server.auth_token else {
