@@ -10,6 +10,12 @@ server:
   # proxy:
   #   http: "http://proxy.example.com:8080"   # HTTP 代理
   #   https: "http://proxy.example.com:8080"  # HTTPS 代理
+  # CORS 配置（可选）- 允许跨域请求
+  cors:
+    enabled: true
+    origins: ["*"]           # 允许的来源，["*"] 表示允许所有，或 ["http://localhost:3000", "https://example.com"]
+    # methods: ["GET", "POST", "OPTIONS"]  # 允许的 HTTP 方法（可选）
+    # headers: ["Content-Type", "Authorization"]  # 允许的请求头（可选）
 
 # 日志配置
 logging:

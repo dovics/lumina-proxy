@@ -9,6 +9,7 @@ use axum::Router;
 use axum::routing::{get, post};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tower_http::cors::{Any, CorsLayer};
 
 use lumina::auth::auth_middleware;
 use lumina::config::Config;
@@ -192,6 +193,32 @@ async fn run_server_with_shared_config(
         .route("/v1/models", get(models_handler))
         .route("/v1/admin/reload-config", post(reload_config_handler))
         .route("/v1/admin/config", get(get_config_handler));
+
+    // Add CORS layer if enabled
+    if let Some(cors_config) = &config.server.cors
+        && cors_config.enabled
+    {
+        let mut cors = CorsLayer::new()
+            .allow_headers(Any)
+            .allow_methods(Any);
+
+        // Set allowed origins
+        if let Some(origins) = &cors_config.origins {
+            if origins.iter().any(|o| o == "*") {
+                cors = cors.allow_origin(Any);
+            } else {
+                let origin_list: Vec<_> = origins
+                    .iter()
+                    .map(|s| s.parse().expect("Invalid origin URL"))
+                    .collect();
+                cors = cors.allow_origin(origin_list);
+            }
+        } else {
+            cors = cors.allow_origin(Any);
+        }
+
+        router = router.layer(cors);
+    }
 
     // Add authentication middleware if auth token is configured
     if config.server.auth_token.is_some() {

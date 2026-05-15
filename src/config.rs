@@ -72,6 +72,22 @@ pub struct ProxyConfig {
     pub https: Option<String>,
 }
 
+/// CORS configuration
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CorsConfig {
+    /// Whether CORS is enabled
+    pub enabled: bool,
+    /// Allowed origins (e.g., ["http://localhost:3000", "https://example.com"])
+    /// Use ["*"] to allow all origins
+    pub origins: Option<Vec<String>>,
+    /// Allowed methods (e.g., ["GET", "POST", "OPTIONS"])
+    /// Defaults to ["GET", "POST", "OPTIONS"] if not specified
+    pub methods: Option<Vec<String>>,
+    /// Allowed headers (e.g., ["Content-Type", "Authorization"])
+    /// Defaults to ["Content-Type", "Authorization"] if not specified
+    pub headers: Option<Vec<String>>,
+}
+
 /// Server configuration
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ServerConfig {
@@ -83,6 +99,8 @@ pub struct ServerConfig {
     pub auth_token: Option<String>,
     /// HTTP proxy configuration for outgoing requests
     pub proxy: Option<ProxyConfig>,
+    /// CORS configuration
+    pub cors: Option<CorsConfig>,
 }
 
 /// Statistics configuration
