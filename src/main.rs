@@ -194,7 +194,16 @@ async fn run_server_with_shared_config(
         .route("/v1/admin/reload-config", post(reload_config_handler))
         .route("/v1/admin/config", get(get_config_handler));
 
-    // Add CORS layer if enabled
+    // Add authentication middleware if auth token is configured
+    // Note: Axum layers execute in reverse order (last added = first executed)
+    if config.server.auth_token.is_some() {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            proxy_state.clone(),
+            auth_middleware,
+        ));
+    }
+
+    // Add CORS layer if enabled (added AFTER auth so it executes FIRST)
     if let Some(cors_config) = &config.server.cors
         && cors_config.enabled
     {
@@ -218,14 +227,6 @@ async fn run_server_with_shared_config(
         }
 
         router = router.layer(cors);
-    }
-
-    // Add authentication middleware if auth token is configured
-    if config.server.auth_token.is_some() {
-        router = router.layer(axum::middleware::from_fn_with_state(
-            proxy_state.clone(),
-            auth_middleware,
-        ));
     }
 
     // Add proxy state to router
