@@ -10,3 +10,5 @@ pub mod types;
 
 #[cfg(feature = "tray")]
 pub mod tray;
+
+pub mod http_proxy;

@@ -70,7 +70,6 @@ pub async fn handle_non_streaming(
                     Json(json!({ "error": format!("Failed to serialize OpenAI request: {}", e) })),
                 )
             }),
-
     };
 
     let body = match body {
@@ -86,7 +85,11 @@ pub async fn handle_non_streaming(
             "OpenAI-compatible request body: {}",
             if body_str.len() > 2000 {
                 // Find a safe char boundary at or before 2000 bytes
-                let truncate_at = body_str.char_indices().find(|(i, _)| *i >= 2000).map(|(i, _)| i).unwrap_or(2000);
+                let truncate_at = body_str
+                    .char_indices()
+                    .find(|(i, _)| *i >= 2000)
+                    .map(|(i, _)| i)
+                    .unwrap_or(2000);
                 format!("{}...", &body_str[..truncate_at])
             } else {
                 body_str

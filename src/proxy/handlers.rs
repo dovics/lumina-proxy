@@ -214,12 +214,16 @@ pub async fn responses_handler(
             match serde_json::from_slice::<serde_json::Value>(&bytes) {
                 Ok(mut json) => {
                     json["model"] = serde_json::Value::String(upstream_model.to_string());
-                    let replaced = serde_json::to_string(&json).unwrap_or_else(|_| body_str.to_string());
+                    let replaced =
+                        serde_json::to_string(&json).unwrap_or_else(|_| body_str.to_string());
                     tracing::debug!(replaced_body = %replaced, "use_native_responses=TRUE: model name replaced via JSON");
                     replaced
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to parse request as JSON for model replacement: {}", e);
+                    tracing::warn!(
+                        "Failed to parse request as JSON for model replacement: {}",
+                        e
+                    );
                     body_str.to_string()
                 }
             }
@@ -478,6 +482,40 @@ pub async fn reload_config_handler(State(state): State<Arc<ProxyState>>) -> impl
     if new_config.server.proxy != current_config.server.proxy {
         warnings
             .push("Proxy configuration changes require server restart to take effect".to_string());
+    }
+
+    // Check for HTTP forward proxy config changes that need restart
+    match (
+        &current_config.http_forward_proxy,
+        &new_config.http_forward_proxy,
+    ) {
+        (None, None) => {}
+        (Some(old), Some(new))
+            if old.enabled != new.enabled || old.port != new.port || old.host != new.host =>
+        {
+            warnings.push(
+                "HTTP forward proxy configuration (host/port/enabled) changed. \
+                Server restart required for changes to take effect."
+                    .to_string(),
+            );
+        }
+        (Some(_), Some(_)) => {}
+        (None, Some(new)) if new.enabled => {
+            warnings.push(
+                "HTTP forward proxy was enabled in configuration. \
+                Server restart required to start the proxy server."
+                    .to_string(),
+            );
+        }
+        (None, Some(_)) => {}
+        (Some(old), None) if old.enabled => {
+            warnings.push(
+                "HTTP forward proxy was disabled in configuration. \
+                Server restart required to stop the proxy server."
+                    .to_string(),
+            );
+        }
+        (Some(_), None) => {}
     }
 
     state.config.store(Arc::new(new_config));

@@ -814,4 +814,3 @@ pub fn format_responses_sse_event(event_type: &str, data: &serde_json::Value) ->
 pub fn format_responses_sse_done() -> String {
     "data: [DONE]\n\n".to_string()
 }
-

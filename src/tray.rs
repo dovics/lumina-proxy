@@ -8,14 +8,14 @@ use arc_swap::ArcSwap;
 use std::path::Path;
 use std::sync::Arc;
 use tao::event_loop::{ControlFlow, EventLoop};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tray_icon::{
     Icon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
 pub struct TrayManager {
-    shutdown_tx: mpsc::Sender<()>,
+    shutdown_tx: broadcast::Sender<()>,
     config: Arc<ArcSwap<Config>>,
     config_path: String,
 }
@@ -47,7 +47,7 @@ pub fn detect_system_language() -> &'static str {
 impl TrayManager {
     /// Create new TrayManager with shutdown sender and shared config
     pub fn new(
-        shutdown_tx: mpsc::Sender<()>,
+        shutdown_tx: broadcast::Sender<()>,
         config: Arc<ArcSwap<Config>>,
         config_path: String,
     ) -> Result<Self> {
@@ -115,7 +115,7 @@ impl TrayManager {
 
             if let Ok(event) = MenuEvent::receiver().try_recv() {
                 if event.id == exit_id {
-                    let _ = shutdown_tx.try_send(());
+                    let _ = shutdown_tx.send(());
                     *control_flow = ControlFlow::Exit;
                 } else if event.id == reload_id {
                     // Reload configuration
@@ -300,14 +300,14 @@ impl TrayManager {
     }
 
     /// Wait for Ctrl+C signal (keeps main thread alive when tray is unavailable)
-    fn wait_for_ctrl_c(shutdown_tx: mpsc::Sender<()>) {
+    fn wait_for_ctrl_c(shutdown_tx: broadcast::Sender<()>) {
         tokio::runtime::Runtime::new()
             .expect("Failed to create runtime for Ctrl+C wait")
             .block_on(async {
                 tokio::signal::ctrl_c()
                     .await
                     .expect("Failed to listen for ctrl+c");
-                let _ = shutdown_tx.send(()).await;
+                let _ = shutdown_tx.send(());
             });
     }
 }

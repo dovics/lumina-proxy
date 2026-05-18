@@ -31,6 +31,9 @@ anyhow = "1.0"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde", "std"] }
 arc-swap = "1.0"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+tower = { version = "0.4", features = ["limit"] }
 tray-icon = { version = "0.15", optional = true }
 tao = { version = "0.28", optional = true }
+hyper = "1.9.0"
+hyper-util = { version = "0.1.20", features = ["tokio"] }

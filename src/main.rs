@@ -8,11 +8,12 @@ use arc_swap::ArcSwap;
 use axum::Router;
 use axum::routing::{get, post};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 
 use lumina::auth::auth_middleware;
 use lumina::config::Config;
+use lumina::http_proxy::HttpForwardProxyServer;
 use lumina::logging::init_logging;
 use lumina::proxy::{
     ProxyState, get_config_handler, models_handler, proxy_handler, reload_config_handler,
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
     init_logging(&config.logging)?;
 
     // Create shutdown channel
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
+    let (shutdown_tx, _shutdown_rx) = broadcast::channel::<()>(16);
 
     // Create shared configuration
     let shared_config = Arc::new(ArcSwap::from_pointee(config));
@@ -49,6 +50,7 @@ fn main() -> Result<()> {
     );
     let server_config = shared_config.clone();
     let server_config_path = config_path.clone();
+    let shutdown_tx_clone = shutdown_tx.clone();
 
     let server_handle = std::thread::spawn(move || {
         tracing::info!("Server thread started, creating Tokio runtime...");
@@ -64,16 +66,55 @@ fn main() -> Result<()> {
         tracing::info!("Tokio runtime created successfully");
 
         // Catch and log any error immediately - don't wait for tray exit
+        let main_shutdown_rx = shutdown_tx_clone.subscribe();
         let result = rt.block_on(run_server_with_shared_config(
             server_config,
             server_config_path,
-            shutdown_rx,
+            main_shutdown_rx,
         ));
         if let Err(e) = &result {
             tracing::error!("Server failed during initialization/execution: {}", e);
         }
         result
     });
+
+    // Start HTTP forward proxy if enabled in config
+    let config_snapshot = shared_config.load();
+    if let Some(proxy_config) = &config_snapshot.http_forward_proxy
+        && proxy_config.enabled
+    {
+        let proxy_shared_config = shared_config.clone();
+        let proxy_shutdown_rx = shutdown_tx.subscribe();
+
+        tracing::info!(
+            "HTTP forward proxy enabled, starting on {}:{}",
+            proxy_config.host,
+            proxy_config.port
+        );
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!("Failed to create Tokio runtime for proxy: {}", e);
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                match HttpForwardProxyServer::new(proxy_shared_config) {
+                    Ok(server) => {
+                        if let Err(e) = server.with_shutdown(proxy_shutdown_rx).run().await {
+                            tracing::error!("HTTP forward proxy error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create HTTP forward proxy server: {}", e);
+                    }
+                }
+            });
+        });
+    }
 
     #[cfg(feature = "tray")]
     {
@@ -145,7 +186,7 @@ fn build_client(config: &Config) -> Result<reqwest::Client> {
 async fn run_server_with_shared_config(
     shared_config: Arc<ArcSwap<Config>>,
     config_path: String,
-    mut shutdown_rx: mpsc::Receiver<()>,
+    mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     tracing::debug!("Server thread started, initializing server...");
 
@@ -207,9 +248,7 @@ async fn run_server_with_shared_config(
     if let Some(cors_config) = &config.server.cors
         && cors_config.enabled
     {
-        let mut cors = CorsLayer::new()
-            .allow_headers(Any)
-            .allow_methods(Any);
+        let mut cors = CorsLayer::new().allow_headers(Any).allow_methods(Any);
 
         // Set allowed origins
         if let Some(origins) = &cors_config.origins {

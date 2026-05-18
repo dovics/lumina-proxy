@@ -219,3 +219,88 @@ routes:
     // Clean up
     std::fs::remove_file(temp_path).unwrap();
 }
+
+#[test]
+fn test_http_forward_proxy_config_parsing() {
+    let yaml = r#"
+server:
+  port: 3000
+  host: 127.0.0.1
+
+http_forward_proxy:
+  enabled: true
+  port: 8080
+  host: 127.0.0.1
+  auth_token: "test-secret"
+  max_connections: 512
+  idle_timeout_secs: 120
+  max_request_body_size: 52428800
+  allowed_target_ports: [80, 443, 8080]
+  blocked_target_ports: [22, 3306]
+
+logging:
+  level: info
+
+statistics:
+  enabled: false
+
+routes:
+  - model_name: "gpt-4"
+    provider_type: openai
+    base_url: "https://api.openai.com/v1"
+    enabled: true
+"#;
+
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let proxy = config.http_forward_proxy.unwrap();
+
+    assert!(proxy.enabled);
+    assert_eq!(proxy.port, 8080);
+    assert_eq!(proxy.host, "127.0.0.1");
+    assert_eq!(proxy.auth_token, Some("test-secret".to_string()));
+    assert_eq!(proxy.max_connections, Some(512));
+    assert_eq!(proxy.idle_timeout_secs, Some(120));
+    assert_eq!(proxy.allowed_target_ports, Some(vec![80, 443, 8080]));
+    assert_eq!(proxy.blocked_target_ports, Some(vec![22, 3306]));
+}
+
+#[test]
+fn test_http_forward_proxy_default_ports() {
+    // Test that config without allowed/blocked ports uses defaults
+    let yaml = r#"
+server:
+  port: 3000
+  host: 127.0.0.1
+
+http_forward_proxy:
+  enabled: true
+  port: 8080
+  host: 127.0.0.1
+
+logging:
+  level: info
+
+statistics:
+  enabled: false
+
+routes:
+  - model_name: "gpt-4"
+    provider_type: openai
+    base_url: "https://api.openai.com/v1"
+    enabled: true
+"#;
+
+    let config: Config = serde_yaml::from_str(yaml).unwrap();
+    let proxy = config.http_forward_proxy.unwrap();
+
+    // None means use defaults in code
+    assert!(proxy.allowed_target_ports.is_none());
+    assert!(proxy.blocked_target_ports.is_none());
+
+    // Test default helper methods
+    assert!(proxy.is_port_allowed(80));
+    assert!(proxy.is_port_allowed(443));
+    assert!(proxy.is_port_allowed(8080));
+    assert!(!proxy.is_port_allowed(22));
+    assert!(!proxy.is_port_allowed(3306));
+}

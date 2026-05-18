@@ -88,6 +88,66 @@ pub struct CorsConfig {
     pub headers: Option<Vec<String>>,
 }
 
+/// HTTP forward proxy configuration
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HttpForwardProxyConfig {
+    /// Whether the HTTP forward proxy is enabled
+    pub enabled: bool,
+    /// Port to listen on for proxy requests
+    pub port: u16,
+    /// Host address to bind to
+    pub host: String,
+    /// Authentication token for proxy access (optional)
+    pub auth_token: Option<String>,
+    /// Maximum concurrent connections (default: 1024)
+    pub max_connections: Option<usize>,
+    /// Idle timeout in seconds for CONNECT tunnels (default: 60)
+    pub idle_timeout_secs: Option<u64>,
+    /// Maximum request body size in bytes (default: 100MB)
+    pub max_request_body_size: Option<usize>,
+    /// Allowed target ports (None means use default whitelist)
+    pub allowed_target_ports: Option<Vec<u16>>,
+    /// Blocked target ports (None means use default blacklist)
+    pub blocked_target_ports: Option<Vec<u16>>,
+}
+
+impl HttpForwardProxyConfig {
+    /// Get default allowed target ports
+    pub fn default_allowed_ports() -> Vec<u16> {
+        vec![
+            80, 443, 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090,
+        ]
+    }
+
+    /// Get default blocked target ports
+    pub fn default_blocked_ports() -> Vec<u16> {
+        vec![22, 3306, 5432, 6379, 27017]
+    }
+
+    /// Get effective allowed ports (configured or default)
+    pub fn allowed_ports(&self) -> Vec<u16> {
+        self.allowed_target_ports
+            .clone()
+            .unwrap_or_else(Self::default_allowed_ports)
+    }
+
+    /// Get effective blocked ports (configured or default)
+    pub fn blocked_ports(&self) -> Vec<u16> {
+        self.blocked_target_ports
+            .clone()
+            .unwrap_or_else(Self::default_blocked_ports)
+    }
+
+    /// Check if a target port is allowed
+    pub fn is_port_allowed(&self, port: u16) -> bool {
+        let blocked = self.blocked_ports();
+        if blocked.contains(&port) {
+            return false;
+        }
+        self.allowed_ports().contains(&port)
+    }
+}
+
 /// Server configuration
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ServerConfig {
@@ -155,6 +215,8 @@ impl RouteConfig {
 pub struct Config {
     /// Server configuration
     pub server: ServerConfig,
+    /// HTTP forward proxy configuration (optional)
+    pub http_forward_proxy: Option<HttpForwardProxyConfig>,
     /// Logging configuration
     pub logging: LoggingConfig,
     /// Statistics configuration
@@ -223,6 +285,34 @@ impl Config {
                 self.logging.level,
                 valid_levels.join(", ")
             ));
+        }
+
+        // Validate HTTP forward proxy config if enabled
+        if let Some(proxy) = &self.http_forward_proxy
+            && proxy.enabled
+        {
+            if proxy.port == 0 {
+                return Err("HTTP forward proxy port cannot be 0".to_string());
+            }
+            if proxy.port == self.server.port {
+                return Err(format!(
+                    "HTTP forward proxy port ({}) cannot be the same as main server port ({})",
+                    proxy.port, self.server.port
+                ));
+            }
+            if proxy.host.is_empty() {
+                return Err("HTTP forward proxy host cannot be empty".to_string());
+            }
+            if let Some(max_conn) = proxy.max_connections
+                && max_conn == 0
+            {
+                return Err("HTTP forward proxy max_connections cannot be 0".to_string());
+            }
+            if let Some(timeout) = proxy.idle_timeout_secs
+                && timeout == 0
+            {
+                return Err("HTTP forward proxy idle_timeout_secs cannot be 0".to_string());
+            }
         }
 
         Ok(())

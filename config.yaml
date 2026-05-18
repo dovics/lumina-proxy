@@ -17,6 +17,39 @@ server:
     # methods: ["GET", "POST", "OPTIONS"]  # 允许的 HTTP 方法（可选）
     # headers: ["Content-Type", "Authorization"]  # 允许的请求头（可选）
 
+# HTTP Forward Proxy configuration
+# Provides standalone HTTP/HTTPS forward proxy functionality on a separate port
+http_forward_proxy:
+  # Whether to enable the HTTP forward proxy
+  enabled: false
+
+  # Port to listen for proxy requests
+  port: 8081
+
+  # Host address to bind to (use 0.0.0.0 to allow external access)
+  host: 127.0.0.1
+
+  # Authentication token for proxy access (optional but recommended)
+  # Clients must send: Proxy-Authorization: Bearer <token>
+  # auth_token: "your-proxy-secret-token"
+
+  # Maximum concurrent connections (default: 1024)
+  # max_connections: 1024
+
+  # Idle timeout in seconds for CONNECT tunnels (default: 60)
+  # idle_timeout_secs: 60
+
+  # Maximum request body size in bytes (default: 104857600 = 100MB)
+  # max_request_body_size: 104857600
+
+  # Allowed target ports - requests to other ports will be rejected
+  # Default: [80, 443, 8080-8090]
+  # allowed_target_ports: [80, 443, 8080]
+
+  # Blocked target ports - takes precedence over allowed list
+  # Default: [22, 3306, 5432, 6379, 27017] (SSH + database ports)
+  # blocked_target_ports: [22, 3306]
+
 # 日志配置
 logging:
   level: "trace"            # 级别: "trace", "debug", "info", "warn", "error"

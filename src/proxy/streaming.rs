@@ -102,7 +102,11 @@ pub async fn handle_streaming(
             "OpenAI-compatible request body: {}",
             if body_str.len() > 2000 {
                 // Find a safe char boundary at or before 2000 bytes
-                let truncate_at = body_str.char_indices().find(|(i, _)| *i >= 2000).map(|(i, _)| i).unwrap_or(2000);
+                let truncate_at = body_str
+                    .char_indices()
+                    .find(|(i, _)| *i >= 2000)
+                    .map(|(i, _)| i)
+                    .unwrap_or(2000);
                 format!("{}...", &body_str[..truncate_at])
             } else {
                 body_str
@@ -169,7 +173,9 @@ pub async fn handle_streaming(
         );
         return Err((
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": format!("Backend returned unexpected content type: {}", content_type) })),
+            Json(
+                json!({ "error": format!("Backend returned unexpected content type: {}", content_type) }),
+            ),
         ));
     }
 
@@ -403,7 +409,6 @@ pub async fn handle_streaming(
                                 }
                             }
                         }
-
                     };
 
                     match openai_chunk_result {
