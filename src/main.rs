@@ -145,7 +145,13 @@ fn main() -> Result<()> {
         }
 
         // Send shutdown signal to server
-        let _ = shutdown_tx.blocking_send(());
+        std::thread::spawn({
+            let shutdown_tx = shutdown_tx.clone();
+            move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let _ = rt.block_on(shutdown_tx.send(()));
+            }
+        });
     }
 
     // Wait for server to finish and log any errors/panics
